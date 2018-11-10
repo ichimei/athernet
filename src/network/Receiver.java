@@ -6,6 +6,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 
 import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.TargetDataLine;
@@ -16,7 +17,7 @@ public class Receiver {
 	static float fs = 44100;      // sample rate
 	static float fc = 11025;       // frequency of carrier
 	static int spb = 44;          // samples per bit
-	static int trunk = 100;       // trunk size (bits per frame)
+	static int trunk = 200;       // trunk size (bits per frame)
 	static int lenHeader = 440;
 	static int maxBuffer = 100;
 	static float thresPower = 10;
@@ -25,12 +26,12 @@ public class Receiver {
 
 	byte data[];
 	File output;
-	File input = new File("20181014T202855.wav");
+	File input = new File("INPUT2.wav");
 	TargetDataLine mic;
 	FileOutputStream fos;
 	boolean stopped = true;
 	boolean syncState = true;
-	int bitsRecv = 0;
+	int bytesRecv = 0;
 	ByteArrayOutputStream bos = new ByteArrayOutputStream();
 
 	private AudioFormat getAudioFormat() {
@@ -54,10 +55,20 @@ public class Receiver {
 		stopped = true;
 	}
 
-	private void writeBits(byte bits[]) {
+	private void writeBits(boolean bits[]) {
 		try {
-			fos.write(bits);
-			bitsRecv += bits.length;
+			byte bytes[] = new byte[bits.length / 8];
+			for (int i = 0; i < bits.length / 8; ++i) {
+				byte b = 0;
+				for (int j = 0; j < 8; ++j) {
+					if (bits[i*8+j]) {
+						b |= 1 << j;
+					}
+				}
+				bytes[i] = b;
+			}
+			fos.write(bytes);
+			bytesRecv += bits.length / 8;
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -91,26 +102,26 @@ public class Receiver {
 			byte empty[] = new byte[lenHeader];
 			bos.write(empty);
 
-			mic.open(format);
-			mic.start();
+//			mic.open(format);
+//			mic.start();
+//
+//			System.out.println("Start receiving...");
+//
+//			byte buffer[] = new byte[maxBuffer];
+//			while (!stopped) {
+//				int bytesRead = mic.read(buffer, 0, maxBuffer);
+//				bos.write(buffer, 0, bytesRead);
+//			}
+//
+//			System.out.println("End receiving!");
+//
+//			mic.stop();
+//			mic.close();
+//
+//			data = bos.toByteArray();
 
-			System.out.println("Start receiving...");
-
-			byte buffer[] = new byte[maxBuffer];
-			while (!stopped) {
-				int bytesRead = mic.read(buffer, 0, maxBuffer);
-				bos.write(buffer, 0, bytesRead);
-			}
-
-			System.out.println("End receiving!");
-
-			mic.stop();
-			mic.close();
-
-			data = bos.toByteArray();
-
-//			AudioInputStream ais = AudioSystem.getAudioInputStream(input);
-//			data = ais.readAllBytes();
+			AudioInputStream ais = AudioSystem.getAudioInputStream(input);
+			data = ais.readAllBytes();
 
 			int newData[] = new int[data.length / 2];
 
@@ -125,7 +136,7 @@ public class Receiver {
 			int start = 0;
 			float power = 0.f;
 
-			byte decoded[] = new byte[trunk];
+			boolean decoded[] = new boolean[trunk];
 
 			for (int i = lenHeader; i < newData.length; ++i) {
 				if (syncState) {
@@ -149,7 +160,7 @@ public class Receiver {
 							float sumRmCarr = 0.f;
 							for (int k = 0; k < spb; ++k)
 								sumRmCarr += (newData[start+1+j*spb+k]) * (float) Math.sin(2 * Math.PI * fc * k / fs);
-							decoded[j] = (byte) (sumRmCarr > 0.f ? '1' : '0');
+							decoded[j] = sumRmCarr > 0.f;
 						}
 						writeBits(decoded);
 						syncState = true;
@@ -158,7 +169,7 @@ public class Receiver {
 				}
 			}
 
-			System.out.println("Received: " + bitsRecv);
+			System.out.println("Received: " + bytesRecv);
 			fos.close();
 
 		} catch (Exception e) {

@@ -1,11 +1,14 @@
 package network;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 
+import javax.sound.sampled.AudioFileFormat;
 import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.SourceDataLine;
@@ -16,7 +19,7 @@ public class Transmitter {
 	static float fs = 44100;       // sample rate
 	static float fc = 11025;        // frequency of carrier
 	static int spb = 44;           // samples per bit
-	static int trunk = 100;        // trunk size (bits per frame)
+	static int trunk = 200;         // trunk size (bits per frame)
 	static int lenHeader = 440;
 	static int maxBuffer = 44100;  // max size of buffer (flush if exceeded)
 
@@ -36,24 +39,30 @@ public class Transmitter {
 		return new AudioFormat(sampleRate, sampleSizeInBits, channels, signed, bigEndian);
 	}
 
-	private int readBits(byte buffer[]) {
-		int bitsRead = 0;
+	private boolean[] readBits(int bits) {
+		byte buffer[] = new byte[bits / 8];
+		int bytesRead = 0;
 		try {
-			bitsRead = fis.read(buffer);
+			bytesRead = fis.read(buffer);
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
-		if (bitsRead == -1)
-			return -1;
-		for (int i = 0; i < bitsRead; ++i) {
-			if (buffer[i] == '1')
-				buffer[i] = 1;
-			else
-				buffer[i] = 0;
+		boolean bitsBuffer[] = new boolean[bits];
+		if (bytesRead == -1)
+			return null;
+		for (int i = 0; i < bytesRead; ++i) {
+			byte b = buffer[i];
+			for (int j = 0; j < 8; ++j) {
+				bitsBuffer[i*8+j] = (b & 1) > 0;
+				b >>= 1;
+			}
 		}
-		for (int i = bitsRead; i < buffer.length - bitsRead; ++i)
-			buffer[i] = 0;
-		return bitsRead;
+		for (int i = bytesRead; i < bits / 8 - bytesRead; ++i) {
+			for (int j = 0; j < 8; ++j) {
+				bitsBuffer[i*8+j] = false;
+			}
+		}
+		return bitsBuffer;
 	}
 
 	private void writeBytes(byte bytes[]) {
@@ -72,7 +81,7 @@ public class Transmitter {
 	public void transmit() {
 		try {
 
-			int length = (int) input.length();
+			int length = (int) input.length() * 8;
 			fis = new FileInputStream(input);
 			AudioFormat format = getAudioFormat();
 			DataLine.Info infoSpeak = new DataLine.Info(SourceDataLine.class, format);
@@ -97,14 +106,6 @@ public class Transmitter {
 				header[2*i+1] = (byte) (wave >> 8);
 			}
 
-			int tmpLength = length;
-			byte lengthHeader[] = new byte[trunk];
-			for (int i = 0; i < 32; ++i) {
-				lengthHeader[i] = (byte) (tmpLength & 1);
-				tmpLength >>= 1;
-			}
-
-			byte trunkBuffer[] = new byte[trunk];
 			byte wave[] = new byte[2*spb];
 
 			for (int i = 0; i < 100; ++i)
@@ -113,11 +114,11 @@ public class Transmitter {
 			int maxTrunks = length / trunk + (length % trunk > 0 ? 1 : 0);
 
 			for (int i = 0; i < maxTrunks; ++i) {
-				readBits(trunkBuffer);
+				boolean bitsBuffer[] = readBits(trunk);
 				writeBytes(header);
 				for (int j = 0; j < trunk; ++j) {
 					for (int k = 0; k < spb; ++k) {
-						int waveo = (int) (amp * Math.sin(2 * Math.PI * fc * k / fs) * (2 * trunkBuffer[j] - 1));
+						int waveo = (int) (amp * Math.sin(2 * Math.PI * fc * k / fs) * (2 * (bitsBuffer[j] ? 1 : 0) - 1));
 						wave[2*k] = (byte) (waveo & 0xff);
 						wave[2*k+1] = (byte) (waveo >> 8);
 					}
@@ -129,16 +130,18 @@ public class Transmitter {
 			fis.close();
 
 			byte data[] = bos.toByteArray();
+
+			AudioSystem.write(new AudioInputStream(new ByteArrayInputStream(data), format, data.length), AudioFileFormat.Type.WAVE, new File("INPUT2.wav"));
+
 			speak.open(format);
 			speak.start();
 
-			// AudioSystem.write(new AudioInputStream(bis, format, data.length), AudioFileFormat.Type.WAVE, new File("INPUT2.wav"));
-
 			System.out.println("Start transmitting...");
 
-			speak.write(data, 0, data.length);
+//			speak.write(data, 0, data.length);
 
 			System.out.println("End transmitting!");
+			System.out.println("Length: " + length);
 			System.out.println("Transmitted: " + bytesTrans);
 
 			speak.stop();
@@ -150,7 +153,7 @@ public class Transmitter {
  	}
 
 	public static void main(String[] args) {
-		File file = new File("INPUT.txt");
+		File file = new File("INPUT2.txt");
 		Transmitter tx = new Transmitter(file);
 		tx.transmit();
 	}
