@@ -6,6 +6,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 
 import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.TargetDataLine;
@@ -15,13 +16,14 @@ public class Receiver {
 	static int amp = 32767;       // amplitude
 	static float fs = 44100;      // sample rate
 	static float fc = 11025;      // frequency of carrier
-	static int spb = 44;          // samples per bit
+	static int spb = 6;           // samples per bit
 	static int trunk = 200;       // trunk size (bits per frame)
 	static int lenHeader = 440;
 	static int maxBuffer = 100;
 	static float thresPower = 10;
-	static float thresPowerCoeff = 400;
-	static int thresBack = 2000;
+	static float thresPowerCoeff = 200;
+	static int thresBack = 1000;
+	static boolean debug = true;
 
 	byte data[];
 	File output;
@@ -101,26 +103,30 @@ public class Receiver {
 			byte empty[] = new byte[lenHeader];
 			bos.write(empty);
 
-			mic.open(format);
-			mic.start();
+			if (!debug) {
 
-			System.out.println("Start receiving...");
+				mic.open(format);
+				mic.start();
 
-			byte buffer[] = new byte[maxBuffer];
-			while (!stopped) {
-				int bytesRead = mic.read(buffer, 0, maxBuffer);
-				bos.write(buffer, 0, bytesRead);
+				System.out.println("Start receiving...");
+
+				byte buffer[] = new byte[maxBuffer];
+				while (!stopped) {
+					int bytesRead = mic.read(buffer, 0, maxBuffer);
+					bos.write(buffer, 0, bytesRead);
+				}
+
+				System.out.println("End receiving!");
+
+				mic.stop();
+				mic.close();
+
+				data = bos.toByteArray();
+
+			} else {
+				AudioInputStream ais = AudioSystem.getAudioInputStream(input);
+				data = ais.readAllBytes();
 			}
-
-			System.out.println("End receiving!");
-
-			mic.stop();
-			mic.close();
-
-			data = bos.toByteArray();
-
-//			AudioInputStream ais = AudioSystem.getAudioInputStream(input);
-//			data = ais.readAllBytes();
 
 			int newData[] = new int[data.length / 2];
 
