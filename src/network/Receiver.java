@@ -6,7 +6,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 
 import javax.sound.sampled.AudioFormat;
-import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.TargetDataLine;
@@ -15,7 +14,7 @@ public class Receiver {
 
 	static int amp = 32767;       // amplitude
 	static float fs = 44100;      // sample rate
-	static float fc = 11025;       // frequency of carrier
+	static float fc = 11025;      // frequency of carrier
 	static int spb = 44;          // samples per bit
 	static int trunk = 200;       // trunk size (bits per frame)
 	static int lenHeader = 440;
@@ -102,26 +101,26 @@ public class Receiver {
 			byte empty[] = new byte[lenHeader];
 			bos.write(empty);
 
-//			mic.open(format);
-//			mic.start();
-//
-//			System.out.println("Start receiving...");
-//
-//			byte buffer[] = new byte[maxBuffer];
-//			while (!stopped) {
-//				int bytesRead = mic.read(buffer, 0, maxBuffer);
-//				bos.write(buffer, 0, bytesRead);
-//			}
-//
-//			System.out.println("End receiving!");
-//
-//			mic.stop();
-//			mic.close();
-//
-//			data = bos.toByteArray();
+			mic.open(format);
+			mic.start();
 
-			AudioInputStream ais = AudioSystem.getAudioInputStream(input);
-			data = ais.readAllBytes();
+			System.out.println("Start receiving...");
+
+			byte buffer[] = new byte[maxBuffer];
+			while (!stopped) {
+				int bytesRead = mic.read(buffer, 0, maxBuffer);
+				bos.write(buffer, 0, bytesRead);
+			}
+
+			System.out.println("End receiving!");
+
+			mic.stop();
+			mic.close();
+
+			data = bos.toByteArray();
+
+//			AudioInputStream ais = AudioSystem.getAudioInputStream(input);
+//			data = ais.readAllBytes();
 
 			int newData[] = new int[data.length / 2];
 

@@ -1,14 +1,11 @@
 package network;
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 
-import javax.sound.sampled.AudioFileFormat;
 import javax.sound.sampled.AudioFormat;
-import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.SourceDataLine;
@@ -17,9 +14,9 @@ public class Transmitter {
 
 	static int amp = 32767;        // amplitude
 	static float fs = 44100;       // sample rate
-	static float fc = 11025;        // frequency of carrier
+	static float fc = 11025;       // frequency of carrier
 	static int spb = 44;           // samples per bit
-	static int trunk = 200;         // trunk size (bits per frame)
+	static int trunk = 200;        // trunk size (bits per frame)
 	static int lenHeader = 440;
 	static int maxBuffer = 44100;  // max size of buffer (flush if exceeded)
 
@@ -128,17 +125,16 @@ public class Transmitter {
 			}
 
 			fis.close();
-
 			byte data[] = bos.toByteArray();
 
-			AudioSystem.write(new AudioInputStream(new ByteArrayInputStream(data), format, data.length), AudioFileFormat.Type.WAVE, new File("INPUT2.wav"));
+			// AudioSystem.write(new AudioInputStream(new ByteArrayInputStream(data), format, data.length), AudioFileFormat.Type.WAVE, new File("INPUT2.wav"));
 
 			speak.open(format);
 			speak.start();
 
 			System.out.println("Start transmitting...");
 
-//			speak.write(data, 0, data.length);
+			speak.write(data, 0, data.length);
 
 			System.out.println("End transmitting!");
 			System.out.println("Length: " + length);
