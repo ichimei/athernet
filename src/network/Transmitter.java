@@ -20,7 +20,7 @@ public class Transmitter {
 	static float fc = 11025;       // frequency of carrier
 	static int spb = 6;            // samples per bit
 	static int trunk = 200;        // trunk size (bits per frame)
-	static int lenHeader = 440;
+	static int lenHeader = 100;
 	static int maxBuffer = 44100;  // max size of buffer (flush if exceeded)
 	static boolean debug = true;
 

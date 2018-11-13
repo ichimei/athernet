@@ -18,11 +18,11 @@ public class Receiver {
 	static float fc = 11025;      // frequency of carrier
 	static int spb = 6;           // samples per bit
 	static int trunk = 200;       // trunk size (bits per frame)
-	static int lenHeader = 440;
+	static int lenHeader = 100;
 	static int maxBuffer = 100;
 	static float thresPower = 10;
-	static float thresPowerCoeff = 200;
-	static int thresBack = 1000;
+	static float thresPowerCoeff = 100;
+	static int thresBack = 500;
 	static boolean debug = true;
 
 	byte data[];
@@ -182,8 +182,8 @@ public class Receiver {
 		}
 	}
 
-	public static void main(String[] args) {
-		long time = 10000;
+	public synchronized static void main(String[] args) throws InterruptedException {
+		long time = 2000;
 		File file = new File("OUTPUT2.txt");
 		Receiver rx = new Receiver(file);
 		rx.start();
