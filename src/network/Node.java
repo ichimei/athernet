@@ -3,7 +3,6 @@ package network;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.IOException;
 import java.util.Arrays;
 
 import javax.sound.sampled.AudioFormat;
@@ -14,8 +13,11 @@ import javax.sound.sampled.SourceDataLine;
 import javax.sound.sampled.TargetDataLine;
 
 public class Node {
+    final int CRC_POLYNOM = 0x9C;
+    final byte CRC_INITIAL = (byte) 0xFF;
 
-	final File file = new File("INPUT.bin");
+	final File file_tx = new File("INPUT.bin");
+	final File file_rx = null;
 	final byte node_id = 0x00;
 	final byte node_tx = (byte) 0xff;
 	final byte node_rx = (byte) 0xff;
@@ -29,6 +31,9 @@ public class Node {
 	final int spb = 6;            // samples per bit
 	final int header_size = 20;
 	final int max_retry = 5;
+	final float thresPower = 10;
+	final float thresPowerCoeff = 100;
+	final int thresBack = 500;
 	int retry = 0;
 	int tx_lar = 0;
 	int rx_lfr = 0;
@@ -58,35 +63,22 @@ public class Node {
 	}
 
 	private void run() {
-		frames_init(file);
+		frames_init(file_tx);
 		device_init();
 		mac();
 		device_stop();
 	}
 
-	private void readBits(FileInputStream fis, boolean[] bitsBuffer) {
-		int bits = bitsBuffer.length;
-		byte buffer[] = new byte[bits / 8];
-		int bytesRead = 0;
-		try {
-			bytesRead = fis.read(buffer);
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
-		if (bytesRead == -1)
-			return;
-		for (int i = 0; i < bytesRead; ++i) {
-			byte b = buffer[i];
+	private boolean[] bytes_to_bits(byte[] bytesBuffer) {
+		boolean[] bitsBuffer = new boolean[bytesBuffer.length * 8];
+		for (int i = 0; i < bytesBuffer.length; ++i) {
+			byte b = bytesBuffer[i];
 			for (int j = 0; j < 8; ++j) {
 				bitsBuffer[i*8+j] = (b & 1) > 0;
 				b >>= 1;
 			}
 		}
-		for (int i = bytesRead; i < bits / 8 - bytesRead; ++i) {
-			for (int j = 0; j < 8; ++j) {
-				bitsBuffer[i*8+j] = false;
-			}
-		}
+		return bitsBuffer;
 	}
 
 	private int[] bits_to_ints(boolean[] bits) {
@@ -109,11 +101,27 @@ public class Node {
 		}
 	}
 
-	private boolean[] get_mac_header() {
-		return null;
+	private boolean[] get_mac_header(byte dest, byte src, boolean ack) {
+		byte[] mac_header = {dest, src, (byte) (ack ? 0xff : 0)};
+		return bytes_to_bits(mac_header);
+	}
+
+	private boolean[] get_crc(byte[] data) {
+		CRC8 crc8 = new CRC8(CRC_POLYNOM, CRC_INITIAL);
+		crc8.update(data,0,data.length);
+		byte crc = (byte) crc8.getValue();
+		boolean[] result = new boolean[8];
+		for (int i = 0; i < 8; ++i) {
+			result[i] = (crc & 1) > 0;
+			crc >>= 1;
+		}
+		return result;
 	}
 
 	private void frames_init(File file) {
+		if (file == null)
+			return;
+
 		try {
 
 			FileInputStream fis = new FileInputStream(file);
@@ -122,16 +130,19 @@ public class Node {
 
 			Arrays.fill(header, true);
 
-			boolean[] bitsBuffer = new boolean[frame_size];
+			byte[] bytesBuffer = new byte[frame_size / 8];
+			boolean[] bitsBuffer;
 			frame_list = new byte[num_frames][];
 			for (int i = 0; i < num_frames; ++i) {
 				ByteArrayOutputStream bos = new ByteArrayOutputStream();
-				readBits(fis, bitsBuffer);
-				writeBits(bos, header);
-				//writeBits(bos, get_mac_header());
+				fis.read(bytesBuffer);
+				bitsBuffer = bytes_to_bits(bytesBuffer);
+				writeBits(bos, get_mac_header(node_tx, node_id, false));
 				writeBits(bos, bitsBuffer);
+				writeBits(bos, get_crc(bytesBuffer));
 				frame_list[i] = bos.toByteArray();
 			}
+			fis.close();
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
@@ -175,20 +186,38 @@ public class Node {
 		int header_ints[] = bits_to_ints(header);
 
 		int state = 0;
+		float maxSyncPower = 0.f;
+		int start = 0;
+		int start_cnt = 0;
+		int while_cnt = 0;
 
 		while (true) {
 			if (state == 0) {
-				int bytesRead = mic.read(buffer, 0, header_len*2);
+				mic.read(buffer, 0, header_len*2);
 				newBuffer = bytes_to_ints(buffer);
 				for (int i = 1; i <= header_len; ++i) {
 					float syncPower = 0.f;
 					for (int j = 0; j < header_len; ++j) {
-						syncPower += ((float) header_ints[j] / amp) * ((float) ( j + i < header_len ? oldBuffer[j+1] : newBuffer[j+i-header_len]) / amp);
+						syncPower += ((float) header_ints[j] / amp) *
+								((float) ( j + i < header_len ? oldBuffer[j+1]
+								: newBuffer[j+i-header_len]) / amp);
+					}
+					if (syncPower >= thresPower && syncPower >= maxSyncPower) {
+						maxSyncPower = syncPower;
+						start = i;
+						start_cnt = while_cnt;
 					}
 				}
-				oldBuffer = newBuffer;
+				if (start != 0 && start_cnt < while_cnt) {
+					maxSyncPower = 0.f;
+					state = 1;
+				} else {
+					oldBuffer = newBuffer;
+				}
 			} else {
+
 			}
+			++while_cnt;
 		}
 	}
 
@@ -198,7 +227,7 @@ public class Node {
 	}
 
 	private boolean wait_ack(int frame_no) {
-		return false;
+		return true;
 	}
 
 	private void link_error() {
