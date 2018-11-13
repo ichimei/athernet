@@ -1,8 +1,10 @@
 package network;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.util.Arrays;
 
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioSystem;
@@ -14,6 +16,9 @@ import javax.sound.sampled.TargetDataLine;
 public class Node {
 
 	final File file = new File("INPUT.bin");
+	final byte node_id = 0x00;
+	final byte node_tx = (byte) 0xff;
+	final byte node_rx = (byte) 0xff;
 
 	int mac_event_no;
 	final int frames = 10;
@@ -33,12 +38,10 @@ public class Node {
 	boolean tx_pending = true;
 	byte[] received_frame;
 
-	byte[] header = new byte[header_size*spb*2];
+	boolean[] header = new boolean[header_size];
 	byte[] intv = new byte[200];
 	byte[][] frame_list;
-	byte[] to_send = new byte[(header_size+frame_size)*spb*2];
-	boolean[] tx_window;
-	boolean[] rx_window;
+	final int header_len = header_size * spb;
 	SourceDataLine speak;
 	TargetDataLine mic;
 
@@ -86,6 +89,30 @@ public class Node {
 		}
 	}
 
+	private int[] bits_to_ints(boolean[] bits) {
+		int[] ints = new int[spb*bits.length];
+		for (int j = 0; j < bits.length; ++j) {
+			for (int k = 0; k < spb; ++k) {
+				ints[j*spb+k] = (int) (amp * Math.sin(2 * Math.PI * fc * k / fs) * (bits[j] ? 1 : -1));
+			}
+		}
+		return ints;
+	}
+
+	private void writeBits(ByteArrayOutputStream bos, boolean[] bits) {
+		for (int j = 0; j < bits.length; ++j) {
+			for (int k = 0; k < spb; ++k) {
+				int waveo = (int) (amp * Math.sin(2 * Math.PI * fc * k / fs) * (bits[j] ? 1 : -1));
+				bos.write((byte) (waveo & 0xff));
+				bos.write((byte) (waveo >> 8));
+			}
+		}
+	}
+
+	private boolean[] get_mac_header() {
+		return null;
+	}
+
 	private void frames_init(File file) {
 		try {
 
@@ -93,27 +120,17 @@ public class Node {
 			int length = (int) (file.length() * 8);
 			num_frames = length / frame_size;
 
-			for (int j = 0; j < header_size; ++j) {
-				for (int k = 0; k < spb; ++k) {
-					int waveo = (int) (amp * Math.sin(2 * Math.PI * fc * k / fs));
-					header[j*spb*2+k*2] = (byte) (waveo & 0xff);
-					header[j*spb*2+k*2+1] = (byte) (waveo >> 8);
-				}
-			}
+			Arrays.fill(header, true);
 
 			boolean[] bitsBuffer = new boolean[frame_size];
 			frame_list = new byte[num_frames][];
 			for (int i = 0; i < num_frames; ++i) {
+				ByteArrayOutputStream bos = new ByteArrayOutputStream();
 				readBits(fis, bitsBuffer);
-				byte[] wave = new byte[2*spb*frame_size];
-				for (int j = 0; j < frame_size; ++j) {
-					for (int k = 0; k < spb; ++k) {
-						int waveo = (int) (amp * Math.sin(2 * Math.PI * fc * k / fs) * (2 * (bitsBuffer[j] ? 1 : 0) - 1));
-						wave[j*spb*2+k*2] = (byte) (waveo & 0xff);
-						wave[j*spb*2+k*2+1] = (byte) (waveo >> 8);
-					}
-				}
-				frame_list[i] = wave;
+				writeBits(bos, header);
+				//writeBits(bos, get_mac_header());
+				writeBits(bos, bitsBuffer);
+				frame_list[i] = bos.toByteArray();
 			}
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -143,19 +160,45 @@ public class Node {
 		mic.close();
 	}
 
-	private void rx() {
+	private int[] bytes_to_ints(byte[] data) {
+		int[] ints = new int[data.length/2];
+		for (int i = 0; i < data.length / 2; ++i)
+			ints[i] = (data[2*i+1] << 8) | (data[2*i] & 0xff);
+		return ints;
+	}
+
+	private void packet_detect() {
+		byte buffer[] = new byte[header_len * 2];
+		int oldBuffer[] = new int[header_len];
+		int newBuffer[];
+		byte packetBuffer[] = new byte[2000];
+		int header_ints[] = bits_to_ints(header);
+
+		int state = 0;
+
 		while (true) {
+			if (state == 0) {
+				int bytesRead = mic.read(buffer, 0, header_len*2);
+				newBuffer = bytes_to_ints(buffer);
+				for (int i = 1; i <= header_len; ++i) {
+					float syncPower = 0.f;
+					for (int j = 0; j < header_len; ++j) {
+						syncPower += ((float) header_ints[j] / amp) * ((float) ( j + i < header_len ? oldBuffer[j+1] : newBuffer[j+i-header_len]) / amp);
+					}
+				}
+				oldBuffer = newBuffer;
+			} else {
+			}
 		}
 	}
 
 	private void send_frame(int frame_no) {
-		System.arraycopy(header, 0, to_send, 0, header.length);
-		System.arraycopy(frame_list[frame_no], 0, to_send, header.length, frame_list[frame_no].length);
+		byte[] to_send = frame_list[frame_no];
 		speak.write(to_send, 0, to_send.length);
 	}
 
 	private boolean wait_ack(int frame_no) {
-		return true;
+		return false;
 	}
 
 	private void link_error() {
