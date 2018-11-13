@@ -9,6 +9,7 @@ import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.SourceDataLine;
+import javax.sound.sampled.TargetDataLine;
 
 public class Node {
 
@@ -39,6 +40,7 @@ public class Node {
 	boolean[] tx_window;
 	boolean[] rx_window;
 	SourceDataLine speak;
+	TargetDataLine mic;
 
 	public Node() {
 	}
@@ -54,9 +56,9 @@ public class Node {
 
 	private void run() {
 		frames_init(file);
-		speak_init();
+		device_init();
 		mac();
-		speak_destroy();
+		device_stop();
 	}
 
 	private void readBits(FileInputStream fis, boolean[] bitsBuffer) {
@@ -118,21 +120,27 @@ public class Node {
 		}
 	}
 
-	private void speak_init() {
+	private void device_init() {
 		AudioFormat format = getAudioFormat();
 		DataLine.Info infoSpeak = new DataLine.Info(SourceDataLine.class, format);
+		DataLine.Info infoMic = new DataLine.Info(TargetDataLine.class, format);
 		try {
 			speak = (SourceDataLine) AudioSystem.getLine(infoSpeak);
+			mic = (TargetDataLine) AudioSystem.getLine(infoMic);
 			speak.open(format);
 			speak.start();
+			mic.open(format);
+			mic.start();
 		} catch (LineUnavailableException e) {
 			e.printStackTrace();
 		}
 	}
 
-	private void speak_destroy() {
+	private void device_stop() {
 		speak.stop();
 		speak.close();
+		mic.stop();
+		mic.close();
 	}
 
 	private void rx() {
@@ -147,7 +155,7 @@ public class Node {
 	}
 
 	private boolean wait_ack(int frame_no) {
-		return false;
+		return true;
 	}
 
 	private void link_error() {
@@ -156,6 +164,7 @@ public class Node {
 
 	private void mac() {
 		for (int i = 0; i < num_frames; ++i) {
+			System.out.println("Send frame " + i);
 			send_frame(i);
 			boolean ack = wait_ack(i);
 			while (!ack) {
@@ -163,8 +172,8 @@ public class Node {
 					link_error();
 					return;
 				}
-				System.out.println("Send frame " + i + " retry " + retry);
 				++retry;
+				System.out.println("Send frame " + i + " retry " + retry);
 				send_frame(i);
 				ack = wait_ack(i);
 			}
