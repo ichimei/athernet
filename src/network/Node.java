@@ -19,8 +19,8 @@ public class Node {
 	final boolean debug = false;
 	ByteArrayOutputStream debug_bos;
 	AudioInputStream debug_ais;
-	final File debug_in_wav = new File("INPUT2.wav");
-	final File debug_out_wav = new File("OUTPUT.wav");
+	final File debug_in_wav = new File("INPUT.wav");
+	final File debug_out_wav = new File("OUTPUT2.wav");
 
     final int CRC_POLYNOM = 0x9c;
     final byte CRC_INITIAL = (byte) 0x00;
@@ -30,7 +30,7 @@ public class Node {
 	final File file_tx = new File("INPUT.bin");
 	final File file_rx = null;
 	final byte node_id = (byte) 0x00;
-	final byte node_tx = (byte) 0x00;
+	final byte node_tx = (byte) 0xff;
 	final byte node_rx = (byte) 0xff;
 //	final File file_tx = null;
 //	final File file_rx = new File("OUTPUT.bin");
@@ -53,8 +53,9 @@ public class Node {
 	int retry = 0;
 	int num_frames = 0;
 	int retry_cnt = 0;
+	int packet_so_far = 0;
 
-	boolean get_ack = false;
+	boolean[] ack_get;
 	boolean stopped = false;
 
 	byte[] received_frame;
@@ -64,7 +65,7 @@ public class Node {
 	byte[] intv = new byte[200];
 	byte[][] frame_list;
 	final int header_len = header_size * spb;
-	final int packet_len = (frame_size + 32) * spb;
+	final int packet_len = (frame_size + 40) * spb;
 	SourceDataLine speak;
 	TargetDataLine mic;
 	FileOutputStream fos;
@@ -139,8 +140,8 @@ public class Node {
 		}
 	}
 
-	private boolean[] get_mac_header(byte dest, byte src, boolean ack) {
-		byte[] mac_header = {dest, src, (byte) (ack ? 0xff : 0)};
+	private boolean[] get_mac_header(byte dest, byte src, boolean ack, int frame_no) {
+		byte[] mac_header = {dest, src, (byte) (ack ? 0xff : 0), (byte) frame_no};
 		boolean[] mac_header_bits = new boolean[mac_header.length * 8];
 		bytes_to_bits(mac_header, mac_header_bits);
 		return mac_header_bits;
@@ -166,19 +167,20 @@ public class Node {
 	}
 
 	private void frame_init(File file) {
+		for (int i = 0; i < header.length; ++i) {
+			header[i] = (i % 2 == 0);
+		}
+		header_ints = bits_to_ints(header);
+
+		if (file == null)
+			return;
+
 		try {
-
-			for (int i = 0; i < header.length; ++i) {
-				header[i] = (i % 2 == 0);
-			}
-			header_ints = bits_to_ints(header);
-
-			if (file == null)
-				return;
 
 			FileInputStream fis = new FileInputStream(file);
 			int length = (int) (file.length() * 8);
 			num_frames = length / frame_size;
+			ack_get = new boolean[num_frames];
 
 			byte[] bytesBuffer = new byte[frame_size / 8];
 			boolean[] bitsBuffer = new boolean[frame_size];
@@ -188,7 +190,7 @@ public class Node {
 				fis.read(bytesBuffer);
 				bytes_to_bits(bytesBuffer, bitsBuffer);
 				writeBits(bos, header);
-				writeBits(bos, get_mac_header(node_tx, node_id, false));
+				writeBits(bos, get_mac_header(node_tx, node_id, false, i));
 				writeBits(bos, bitsBuffer);
 				writeBits(bos, get_crc(bytesBuffer, 0, bytesBuffer.length));
 				frame_list[i] = bos.toByteArray();
@@ -255,7 +257,6 @@ public class Node {
 		float maxSyncPower = 0.f;
 		int start = 0;
 		int next_cur = 0;
-		int packet_no = 0;
 		float power = 0.f;
 		cur = buffer_len;
 
@@ -291,9 +292,7 @@ public class Node {
 				}
 			} else {
 				if (cur - start == packet_len) {
-					System.out.println("Packet detected: " + packet_no);
 //					System.out.println("Start is: " + start);
-					++packet_no;
 					boolean decoded[] = new boolean[packet_len/spb];
 					for (int j = 0; j < packet_len / spb; ++j) {
 						float sumRmCarr = 0.f;
@@ -315,7 +314,7 @@ public class Node {
 	private byte bit8_to_byte(boolean[] bit8, int offset) {
 		byte ret = 0;
 		for (int i = 0; i < 8; ++i) {
-			if (bit8[i]) {
+			if (bit8[i + offset]) {
 				ret |= 1 << i;
 			}
 		}
@@ -323,38 +322,51 @@ public class Node {
 	}
 
 	private void packet_ana(boolean[] decoded) {
-		if (bit8_to_byte(decoded, 0) != node_id) {
-//			System.out.println("To: " + bit8_to_byte(decoded, 0));
+		System.out.println("There is a packet");
+		byte packet_dest = bit8_to_byte(decoded, 0);
+		if (packet_dest != node_id) {
+			System.out.println("To: " + bit8_to_byte(decoded, 0));
 			return;
 		}
-//		System.out.println("To me!");
 		byte packet_src = bit8_to_byte(decoded, 8);
 		byte type = bit8_to_byte(decoded, 16);
-		if ((type & 1) == 1) {
-			// ACK!
-//			System.out.println("ACK!");
-			get_ack = true;
+		int frame_no = bit8_to_byte(decoded, 24) & 0xff;
+		if (type == (byte) 0xff) {
+			if (packet_src == node_tx) {
+				System.out.println("ACK!");
+				ack_get[frame_no] = true;
+			} else {
+				System.out.println("Who is that?");
+			}
 			return;
 		} else {
+			if (packet_src != node_rx) {
+				System.out.println("Who is that?");
+				return;
+			}
 			// normal packet!
-//			System.out.println("Not ACK!");
 			byte decoded_bytes[] = new byte[decoded.length / 8];
 			bits_to_bytes(decoded, decoded_bytes);
-			if (get_crc_byte(decoded_bytes, 3, frame_size / 8) != decoded_bytes[frame_size / 8 + 3]) {
+			if (get_crc_byte(decoded_bytes, 4, frame_size / 8) != decoded_bytes[frame_size / 8 + 4]) {
 				// crc failed! pretend not detected
-//				System.out.println("CRC failed!");
+				System.out.println("CRC failed!");
 				return;
 			} else if (file_rx != null) {
-				// this is correct packet! write it
-				System.out.println("Correct packet!");
-				try {
-					fos.write(decoded_bytes, 3, frame_size / 8);
-				} catch (IOException e) {
-					e.printStackTrace();
+				// this is correct packet!
+				System.out.println("Correct packet: " + frame_no);
+
+				if (frame_no == packet_so_far) {
+					try {
+						fos.write(decoded_bytes, 4, frame_size / 8);
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+					packet_so_far++;
 				}
+
 				// send ack!
 				ByteArrayOutputStream bos = new ByteArrayOutputStream();
-				writeBits(bos, get_mac_header(node_rx, node_id, true));
+				writeBits(bos, get_mac_header(node_rx, node_id, true, frame_no));
 				writeBits(bos, new boolean[frame_size + 8]);
 				byte[] to_send = bos.toByteArray();
 				if (debug) {
@@ -383,13 +395,12 @@ public class Node {
 		}
 	}
 
-	private boolean wait_ack() {
+	private boolean wait_ack(int frame_no) {
 		if (debug)
 			return true;
 		long start = System.currentTimeMillis();
 		while (System.currentTimeMillis() - start < ack_timeout) {
-			if (get_ack) {
-				get_ack = false;
+			if (ack_get[frame_no]) {
 				return true;
 			}
 		}
@@ -404,7 +415,7 @@ public class Node {
 		for (int i = 0; i < num_frames; ++i) {
 			System.out.println("Send frame " + i);
 			send_frame(i);
-			boolean ack = wait_ack();
+			boolean ack = wait_ack(i);
 			while (!ack) {
 				if (retry == max_retry) {
 					link_error();
@@ -414,7 +425,7 @@ public class Node {
 				++retry;
 //				System.out.println("Send frame " + i + " retry " + retry);
 				send_frame(i);
-				ack = wait_ack();
+				ack = wait_ack(i);
 			}
 //			System.out.println("ACK frame " + i);
 			retry = 0;
