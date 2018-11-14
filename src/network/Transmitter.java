@@ -20,9 +20,9 @@ public class Transmitter {
 	static float fc = 11025;       // frequency of carrier
 	static int spb = 6;            // samples per bit
 	static int trunk = 200;        // trunk size (bits per frame)
-	static int lenHeader = 100;
-	static int maxBuffer = 44100;  // max size of buffer (flush if exceeded)
-	static boolean debug = true;
+	static int lenHeader = 200;
+	static int maxBuffer = 100;  // max size of buffer (flush if exceeded)
+	static boolean debug = false;
 
 	int bytesTrans = 0;    // number of bytes transmitted
 	File input;
@@ -109,8 +109,14 @@ public class Transmitter {
 
 			byte wave[] = new byte[2*spb];
 
-			for (int i = 0; i < 100; ++i)
-				writeBytes(intv);
+			for (int i = 0; i < 1000; ++i) {
+				for (int k = 0; k < spb; ++k) {
+					int waveo = (int) (amp * Math.sin(2 * Math.PI * fc * k / fs));
+					wave[2*k] = (byte) (waveo & 0xff);
+					wave[2*k+1] = (byte) (waveo >> 8);
+				}
+				writeBytes(wave);
+			}
 
 			int maxTrunks = length / trunk + (length % trunk > 0 ? 1 : 0);
 
@@ -126,6 +132,15 @@ public class Transmitter {
 					writeBytes(wave);
 				}
 				writeBytes(intv);
+			}
+
+			for (int i = 0; i < 100000; ++i) {
+				for (int k = 0; k < spb; ++k) {
+					int waveo = (int) (amp * Math.sin(2 * Math.PI * fc * k / fs));
+					wave[2*k] = (byte) (waveo & 0xff);
+					wave[2*k+1] = (byte) (waveo >> 8);
+				}
+				writeBytes(wave);
 			}
 
 			fis.close();

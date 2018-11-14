@@ -18,11 +18,11 @@ public class Receiver {
 	static float fc = 11025;      // frequency of carrier
 	static int spb = 6;           // samples per bit
 	static int trunk = 200;       // trunk size (bits per frame)
-	static int lenHeader = 100;
+	static int lenHeader = 200;
 	static int maxBuffer = 100;
-	static float thresPower = 10;
+	static float thresPower = 80;
 	static float thresPowerCoeff = 100;
-	static int thresBack = 500;
+	static int thresBack = 1000;
 	static boolean debug = true;
 
 	byte data[];

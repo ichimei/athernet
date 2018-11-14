@@ -24,32 +24,32 @@ public class Node {
 
     final int CRC_POLYNOM = 0x9c;
     final byte CRC_INITIAL = (byte) 0x00;
-    final int[] large_buffer = new int[44100 * 20];
+    final int[] large_buffer = new int[44100 * 1000];
     int cur = 0;
 
 	final File file_tx = new File("INPUT.bin");
 	final File file_rx = new File("OUTPUT.bin");
-	final byte node_id = (byte) 0x00;
-	final byte node_tx = (byte) 0x00;
-	final byte node_rx = (byte) 0x00;
+	final byte node_id = (byte) 0x56;
+	final byte node_tx = (byte) 0x56;
+	final byte node_rx = (byte) 0x56;
 //	final File file_tx = null;
 //	final File file_rx = new File("OUTPUT.bin");
 //	final byte node_id = (byte) 0xff;
 //	final byte node_tx = (byte) 0x00;
 //	final byte node_rx = (byte) 0x00;
 
-	final long duration = 100000;
+	final long duration = 30000;
 	final int frame_size = 200;
 	final int amp = 32767;        // amplitude
 	final float fs = 44100;       // sample rate
 	final float fc = 11025;       // frequency of carrier
-	final int spb = 8;            // samples per bit
-	final int header_size = 20;
-	final int max_retry = 5;
-	final float thresPower = 20;
-	final float thresPowerCoeff = 100;
-	final int thresBack = 200;
-	final long ack_timeout = 10000000;
+	final int spb = 6;            // samples per bit
+	final int header_size = 200;
+	final int max_retry = 10;
+	final float thresPower = 30;
+	final float thresPowerCoeff = 30;
+	final int thresBack = 1000;
+	final long ack_timeout = 1000;
 	int retry = 0;
 	int num_frames = 0;
 	int retry_cnt = 0;
@@ -60,11 +60,10 @@ public class Node {
 
 	byte[] received_frame;
 
-	boolean[] header = new boolean[header_size];
-	int[] header_ints;
+	byte[] header = new byte[2*header_size];
+	int[] header_ints = new int[header_size];
 	byte[] intv = new byte[200];
 	byte[][] frame_list;
-	final int header_len = header_size * spb;
 	final int packet_len = (frame_size + 40) * spb;
 	SourceDataLine speak;
 	TargetDataLine mic;
@@ -120,15 +119,15 @@ public class Node {
 		}
 	}
 
-	private int[] bits_to_ints(boolean[] bits) {
-		int[] ints = new int[spb*bits.length];
-		for (int j = 0; j < bits.length; ++j) {
-			for (int k = 0; k < spb; ++k) {
-				ints[j*spb+k] = (int) (amp * Math.sin(2 * Math.PI * fc * k / fs) * (bits[j] ? 1 : -1));
-			}
-		}
-		return ints;
-	}
+//	private int[] bits_to_ints(boolean[] bits) {
+//		int[] ints = new int[spb*bits.length];
+//		for (int j = 0; j < bits.length; ++j) {
+//			for (int k = 0; k < spb; ++k) {
+//				ints[j*spb+k] = (int) (amp * Math.sin(2 * Math.PI * fc * k / fs) * (bits[j] ? 1 : -1));
+//			}
+//		}
+//		return ints;
+//	}
 
 	private void writeBits(ByteArrayOutputStream bos, boolean[] bits) {
 		for (int j = 0; j < bits.length; ++j) {
@@ -167,10 +166,23 @@ public class Node {
 	}
 
 	private void frame_init(File file) {
-		for (int i = 0; i < header.length; ++i) {
-			header[i] = (i % 2 == 0);
+
+		float fp[] = new float[header_size];
+		float halfLenHeader = header_size / 2;
+		for (int i = 0; i < header_size / 2; ++i)
+			fp[i] = 2000.f + i / halfLenHeader * 8000.f;
+		for (int i = header_size / 2; i < header_size; ++i)
+			fp[i] = 10000.f - (i - header_size / 2) / halfLenHeader * 8000.f;
+
+		float cum = 0.f;
+
+		for (int i = 0; i < header_size; ++i) {
+			cum += fp[i];
+			int wave = (int) (amp * Math.sin(2 * Math.PI * cum / fs));
+			header_ints[i] = wave;
+			header[2*i] = (byte) (wave & 0xff);
+			header[2*i+1] = (byte) (wave >> 8);
 		}
-		header_ints = bits_to_ints(header);
 
 		if (file == null)
 			return;
@@ -189,7 +201,7 @@ public class Node {
 				ByteArrayOutputStream bos = new ByteArrayOutputStream();
 				fis.read(bytesBuffer);
 				bytes_to_bits(bytesBuffer, bitsBuffer);
-				writeBits(bos, header);
+				bos.write(header);
 				writeBits(bos, get_mac_header(node_tx, node_id, false, i));
 				writeBits(bos, bitsBuffer);
 				writeBits(bos, get_crc(bytesBuffer, 0, bytesBuffer.length));
@@ -256,7 +268,6 @@ public class Node {
 		boolean syncState = true;
 		float maxSyncPower = 0.f;
 		int start = 0;
-		int next_cur = 0;
 		float power = 0.f;
 		cur = buffer_len;
 //		int next_read = cur;
@@ -282,10 +293,10 @@ public class Node {
 
 			if (syncState) {
 				float syncPower = 0.f;
-				for (int j = 0; j < header_len; ++j) {
-					syncPower += ((float) header_ints[j] / amp) * ((float) large_buffer[cur+j-header_len+1] / amp);
+				for (int j = 0; j < header_size; ++j) {
+					syncPower += ((float) header_ints[j] / amp) * ((float) large_buffer[cur+j-header_size+1] / amp);
 				}
-				if (cur >= next_cur && syncPower > power * thresPowerCoeff && syncPower > maxSyncPower && syncPower > thresPower) {
+				if (syncPower > power * thresPowerCoeff && syncPower > maxSyncPower && syncPower > thresPower) {
 					maxSyncPower = syncPower;
 					start = cur;
 				} else if (cur - start > thresBack && start != 0) {
@@ -305,7 +316,6 @@ public class Node {
 					packet_ana(decoded);
 					syncState = true;
 					start = 0;
-					next_cur = cur + header_len;
 				}
 			}
 			++cur;
@@ -324,7 +334,7 @@ public class Node {
 	}
 
 	private void packet_ana(boolean[] decoded) {
-		System.out.println("There is a packet");
+//		System.out.println("There is a packet");
 		byte packet_dest = bit8_to_byte(decoded, 0);
 		if (packet_dest != node_id) {
 			System.out.println("To: " + bit8_to_byte(decoded, 0));
@@ -368,7 +378,11 @@ public class Node {
 
 				// send ack!
 				ByteArrayOutputStream bos = new ByteArrayOutputStream();
-				writeBits(bos, header);
+				try {
+					bos.write(header);
+				} catch (IOException e1) {
+					e1.printStackTrace();
+				}
 				writeBits(bos, get_mac_header(node_rx, node_id, true, frame_no));
 				writeBits(bos, new boolean[frame_size + 8]);
 				byte[] to_send = bos.toByteArray();
@@ -404,7 +418,7 @@ public class Node {
 		long start = System.currentTimeMillis();
 		while (System.currentTimeMillis() - start < ack_timeout) {
 			if (ack_get[frame_no]) {
-				System.out.println("EEE");
+				System.out.println("ACK acquired " + frame_no);
 				return true;
 			}
 		}
