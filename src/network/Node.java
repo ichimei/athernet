@@ -12,12 +12,11 @@ import javax.sound.sampled.AudioFileFormat;
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
-import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.SourceDataLine;
 import javax.sound.sampled.TargetDataLine;
 
 public class Node {
-	final boolean debug = true;
+	final boolean debug = false;
 	ByteArrayOutputStream debug_bos;
 	AudioInputStream debug_ais;
 	final File debug_in_wav = new File("INPUT.wav");
@@ -39,7 +38,7 @@ public class Node {
 	final byte node_tx = (byte) 0x00;
 	final byte node_rx = (byte) 0x00;
 
-
+	final long duration = 5000;
 	final int frame_size = 200;
 	final int amp = 32767;        // amplitude
 	final float fs = 44100;       // sample rate
@@ -70,9 +69,6 @@ public class Node {
 	TargetDataLine mic;
 	FileOutputStream fos;
 
-	public Node() {
-	}
-
 	private AudioFormat getAudioFormat() {
 		float sampleRate = 44100.f;
 		int sampleSizeInBits = 16;
@@ -85,8 +81,18 @@ public class Node {
 	private void run() {
 		frames_init(file_tx);
 		device_init();
-		new Thread(()->packet_detect()).start();
-		mac();
+		Thread pd = new Thread(()->packet_detect());
+		Thread mc = new Thread(()->mac());
+		pd.start();
+		mc.start();
+		try {
+			Thread.sleep(duration);
+			stopped = true;
+			pd.join();
+			mc.join();
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
 		device_stop();
 	}
 
@@ -216,7 +222,7 @@ public class Node {
 			speak.start();
 			mic.open();
 			mic.start();
-		} catch (LineUnavailableException e) {
+		} catch (Exception e) {
 			e.printStackTrace();
 		}
 	}
@@ -241,7 +247,7 @@ public class Node {
 	}
 
 	private void packet_detect() {
-		int buffer_len = 200;
+		int buffer_len = 500;
 		byte buffer[] = new byte[buffer_len * 2];
 
 		boolean syncState = true;
@@ -264,7 +270,7 @@ public class Node {
 				} else {
 					bytesRead = mic.read(buffer, 0, buffer_len*2);
 				}
-				if (bytesRead < buffer_len*2)
+				if (bytesRead <= 0)
 					return;
 				bytes_to_ints(buffer, large_buffer, cur);
 			}
@@ -302,6 +308,7 @@ public class Node {
 			}
 			++cur;
 		}
+		System.out.println("Packet detector stopped!");
 	}
 
 	private byte bit8_to_byte(boolean[] bit8, int offset) {
@@ -411,18 +418,16 @@ public class Node {
 //			System.out.println("ACK frame " + i);
 			retry = 0;
 		}
-		System.out.println("Transmission complete!");
+		System.out.println("Transmission complete! Mac stopped!");
 		if (debug) {
 			AudioFormat format = getAudioFormat();
 			byte[] data = debug_bos.toByteArray();
 			try {
 				AudioSystem.write(new AudioInputStream(new ByteArrayInputStream(data), format, data.length), AudioFileFormat.Type.WAVE, debug_out_wav);
-				Thread.sleep(5000);
 			} catch (Exception e) {
 				e.printStackTrace();
 			}
 		}
-		stopped = true;
 	}
 
 	public static void main(String[] args) {
