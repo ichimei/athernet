@@ -31,7 +31,7 @@ public class Node {
 
 //	final File file_tx = new File("INPUT.bin");
 //	final File file_rx = null;
-    final File file_tx = null;
+	final File file_tx = null;
 	final File file_rx = new File("OUTPUT.bin");
 	final byte node_id = (byte) 0xff;
 	final byte node_tx = (byte) 0x00;
@@ -44,9 +44,9 @@ public class Node {
 	final int spb = 6;            // samples per bit
 	final int header_size = 20;
 	final int max_retry = 5;
-	final float thresPower = 30;
+	final float thresPower = 10;
 	final float thresPowerCoeff = 100;
-	final int thresBack = 100;
+	final int thresBack = 200;
 	final long ack_timeout = 200;
 	int retry = 0;
 	int num_frames = 0;
@@ -244,6 +244,7 @@ public class Node {
 		boolean syncState = true;
 		float maxSyncPower = 0.f;
 		int start = 0;
+		int next_cur = 0;
 		float power = 0.f;
 		cur = buffer_len;
 
@@ -263,24 +264,24 @@ public class Node {
 					return;
 				bytes_to_ints(buffer, large_buffer, cur);
 			}
+			power = power * 63.f / 64.f + ((float) large_buffer[cur] / amp) * ((float) large_buffer[cur] / amp) / 64.f;
+
 			if (syncState) {
-				power = power * 63.f / 64.f + ((float) large_buffer[cur] / amp) * ((float) large_buffer[cur] / amp) / 64.f;
 				float syncPower = 0.f;
 				for (int j = 0; j < header_len; ++j) {
 					syncPower += ((float) header_ints[j] / amp) * ((float) large_buffer[cur+j-header_len+1] / amp);
 				}
-				if (syncPower > power * thresPowerCoeff && syncPower > maxSyncPower && syncPower > thresPower) {
+				if (cur > next_cur && syncPower > power * thresPowerCoeff && syncPower > maxSyncPower && syncPower > thresPower) {
 					maxSyncPower = syncPower;
 					start = cur;
 				} else if (cur - start > thresBack && start != 0) {
-					System.out.println("Start is: " + start);
-					power = 0.f;
 					maxSyncPower = 0.f;
 					syncState = false;
 				}
 			} else {
 				if (cur - start == packet_len) {
 					System.out.println("Packet detected: " + x);
+//					System.out.println("Start is: " + start);
 					++x;
 					boolean decoded[] = new boolean[packet_len/spb];
 					for (int j = 0; j < packet_len / spb; ++j) {
@@ -292,6 +293,22 @@ public class Node {
 					packet_ana(decoded);
 					syncState = true;
 					start = 0;
+					next_cur = cur + buffer_len;
+//					cur += buffer_len;
+//					int x = (cur / buffer_len) * buffer_len;
+//					int bytesRead = 0;
+//					if (debug) {
+//						try {
+//							bytesRead = debug_ais.read(buffer, 0, buffer_len*2);
+//						} catch (IOException e) {
+//							e.printStackTrace();
+//						}
+//					} else {
+//						bytesRead = mic.read(buffer, 0, buffer_len*2);
+//					}
+//					if (bytesRead < buffer_len*2)
+//						return;
+//					bytes_to_ints(buffer, large_buffer, x);
 				}
 			}
 			++cur;
@@ -310,29 +327,29 @@ public class Node {
 
 	private void packet_ana(boolean[] decoded) {
 		if (bit8_to_byte(decoded, 0) != node_id) {
-			System.out.println("Not me, to: " + bit8_to_byte(decoded, 0));
+//			System.out.println("To: " + bit8_to_byte(decoded, 0));
 			return;
 		}
-		System.out.println("To me!");
+//		System.out.println("To me!");
 		byte packet_src = bit8_to_byte(decoded, 8);
 		byte type = bit8_to_byte(decoded, 16);
 		if (type > 0x7f) {
-			System.out.println("ACK!");
 			// ACK!
+//			System.out.println("ACK!");
 			get_ack = true;
 			return;
 		} else {
-			System.out.println("Normal!");
 			// normal packet!
+//			System.out.println("Not ACK!");
 			byte decoded_bytes[] = new byte[decoded.length / 8];
 			bits_to_bytes(decoded, decoded_bytes);
 			if (get_crc_byte(decoded_bytes, 3, frame_size / 8) != decoded_bytes[frame_size / 8 + 3]) {
 				// crc failed! pretend not detected
-				System.out.println("CRC failed!");
+//				System.out.println("CRC failed!");
 				return;
 			} else if (file_rx != null) {
-				System.out.println("My packet!");
 				// this is my packet! write it
+				System.out.println("Correct packet!");
 				try {
 					fos.write(decoded_bytes, 3, frame_size / 8);
 				} catch (IOException e) {
@@ -361,6 +378,7 @@ public class Node {
 		if (debug) {
 			try {
 				debug_bos.write(to_send);
+				debug_bos.write(new byte[500]);
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
