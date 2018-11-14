@@ -19,24 +19,24 @@ public class Node {
 	final boolean debug = false;
 	ByteArrayOutputStream debug_bos;
 	AudioInputStream debug_ais;
-	final File debug_in_wav = new File("INPUT.wav");
-	final File debug_out_wav = new File("OUTPUT2.wav");
+	final File debug_in_wav = new File("INPUT2.wav");
+	final File debug_out_wav = new File("OUTPUT.wav");
 
     final int CRC_POLYNOM = 0x9c;
     final byte CRC_INITIAL = (byte) 0x00;
     final int[] large_buffer = new int[44100 * 20];
     int cur = 0;
 
-//	final File file_tx = new File("INPUT.bin");
-//	final File file_rx = null;
-//	final byte node_id = (byte) 0x00;
-//	final byte node_tx = (byte) 0x00;
-//	final byte node_rx = (byte) 0xff;
-	final File file_tx = null;
-	final File file_rx = new File("OUTPUT.bin");
-	final byte node_id = (byte) 0xff;
+	final File file_tx = new File("INPUT.bin");
+	final File file_rx = null;
+	final byte node_id = (byte) 0x00;
 	final byte node_tx = (byte) 0x00;
-	final byte node_rx = (byte) 0x00;
+	final byte node_rx = (byte) 0xff;
+//	final File file_tx = null;
+//	final File file_rx = new File("OUTPUT.bin");
+//	final byte node_id = (byte) 0xff;
+//	final byte node_tx = (byte) 0x00;
+//	final byte node_rx = (byte) 0x00;
 
 	final long duration = 5000;
 	final int frame_size = 200;
@@ -79,8 +79,8 @@ public class Node {
 	}
 
 	private void run() {
-		frames_init(file_tx);
-		device_init();
+		frame_init(file_tx);
+		device_start();
 		Thread pd = new Thread(()->packet_detect());
 		Thread mc = new Thread(()->mac());
 		pd.start();
@@ -94,6 +94,7 @@ public class Node {
 			e.printStackTrace();
 		}
 		device_stop();
+		System.out.println("Node stopped!");
 	}
 
 	private void bytes_to_bits(byte[] bytesBuffer, boolean[] bitsBuffer) {
@@ -164,7 +165,7 @@ public class Node {
 		return result;
 	}
 
-	private void frames_init(File file) {
+	private void frame_init(File file) {
 		try {
 
 			for (int i = 0; i < header.length; ++i) {
@@ -198,7 +199,7 @@ public class Node {
 		}
 	}
 
-	private void device_init() {
+	private void device_start() {
 		if (debug) {
 			debug_bos = new ByteArrayOutputStream();
 			try {
@@ -247,7 +248,7 @@ public class Node {
 	}
 
 	private void packet_detect() {
-		int buffer_len = 500;
+		int buffer_len = 200;
 		byte buffer[] = new byte[buffer_len * 2];
 
 		boolean syncState = true;
