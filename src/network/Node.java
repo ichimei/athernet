@@ -30,14 +30,13 @@ public class Node {
     int cur = 0;
 
 //	final File file_tx = new File("INPUT.bin");
-    final File file_tx = null;
 //	final File file_rx = null;
+    final File file_tx = null;
 	final File file_rx = new File("OUTPUT.bin");
 	final byte node_id = (byte) 0xff;
 	final byte node_tx = (byte) 0x00;
 	final byte node_rx = (byte) 0x00;
 
-	final int frames = 10;
 	final int frame_size = 200;
 	final int amp = 32767;        // amplitude
 	final float fs = 44100;       // sample rate
@@ -45,8 +44,8 @@ public class Node {
 	final int spb = 6;            // samples per bit
 	final int header_size = 20;
 	final int max_retry = 5;
-	final float thresPower = 10;
-	final float thresPowerCoeff = 50;
+	final float thresPower = 30;
+	final float thresPowerCoeff = 100;
 	final int thresBack = 100;
 	final long ack_timeout = 200;
 	int retry = 0;
@@ -157,18 +156,19 @@ public class Node {
 	}
 
 	private void frames_init(File file) {
-		if (file == null)
-			return;
-
 		try {
-
-			FileInputStream fis = new FileInputStream(file);
-			int length = (int) (file.length() * 8);
-			num_frames = length / frame_size;
 
 			for (int i = 0; i < header.length; ++i) {
 				header[i] = (i % 2 == 0);
 			}
+			header_ints = bits_to_ints(header);
+
+			if (file == null)
+				return;
+
+			FileInputStream fis = new FileInputStream(file);
+			int length = (int) (file.length() * 8);
+			num_frames = length / frame_size;
 
 			byte[] bytesBuffer = new byte[frame_size / 8];
 			boolean[] bitsBuffer = new boolean[frame_size];
@@ -240,27 +240,27 @@ public class Node {
 	private void packet_detect() {
 		int buffer_len = 200;
 		byte buffer[] = new byte[buffer_len * 2];
-		header_ints = bits_to_ints(header);
 
-		boolean syncState = false;
+		boolean syncState = true;
 		float maxSyncPower = 0.f;
 		int start = 0;
 		float power = 0.f;
 		cur = buffer_len;
 
-		while (true) {
-			if (stopped || cur >= large_buffer.length)
-				return;
+		while (!stopped && cur < large_buffer.length) {
 			if (cur % buffer_len == 0) {
+				int bytesRead = 0;
 				if (debug) {
 					try {
-						debug_ais.read(buffer, 0, buffer_len*2);
+						bytesRead = debug_ais.read(buffer, 0, buffer_len*2);
 					} catch (IOException e) {
 						e.printStackTrace();
 					}
 				} else {
-					mic.read(buffer, 0, buffer_len*2);
+					bytesRead = mic.read(buffer, 0, buffer_len*2);
 				}
+				if (bytesRead < buffer_len*2)
+					return;
 				bytes_to_ints(buffer, large_buffer, cur);
 			}
 			if (syncState) {
@@ -273,12 +273,15 @@ public class Node {
 					maxSyncPower = syncPower;
 					start = cur;
 				} else if (cur - start > thresBack && start != 0) {
-					// System.out.println(start);
+					System.out.println("Start is: " + start);
+					power = 0.f;
 					maxSyncPower = 0.f;
 					syncState = false;
 				}
 			} else {
 				if (cur - start == packet_len) {
+					System.out.println("Packet detected: " + x);
+					++x;
 					boolean decoded[] = new boolean[packet_len/spb];
 					for (int j = 0; j < packet_len / spb; ++j) {
 						float sumRmCarr = 0.f;
@@ -306,12 +309,11 @@ public class Node {
 	}
 
 	private void packet_ana(boolean[] decoded) {
-		System.out.println("Packet detected!!!" + x);
-		++x;
 		if (bit8_to_byte(decoded, 0) != node_id) {
-			System.out.println("To: " + bit8_to_byte(decoded, 0));
+			System.out.println("Not me, to: " + bit8_to_byte(decoded, 0));
 			return;
 		}
+		System.out.println("To me!");
 		byte packet_src = bit8_to_byte(decoded, 8);
 		byte type = bit8_to_byte(decoded, 16);
 		if (type > 0x7f) {
@@ -320,6 +322,7 @@ public class Node {
 			get_ack = true;
 			return;
 		} else {
+			System.out.println("Normal!");
 			// normal packet!
 			byte decoded_bytes[] = new byte[decoded.length / 8];
 			bits_to_bytes(decoded, decoded_bytes);
@@ -328,7 +331,7 @@ public class Node {
 				System.out.println("CRC failed!");
 				return;
 			} else if (file_rx != null) {
-				System.out.println("CRC true!");
+				System.out.println("My packet!");
 				// this is my packet! write it
 				try {
 					fos.write(decoded_bytes, 3, frame_size / 8);
