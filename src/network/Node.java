@@ -1,5 +1,6 @@
 package network;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -8,20 +9,30 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.Arrays;
 
+import javax.sound.sampled.AudioFileFormat;
 import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
-import javax.sound.sampled.DataLine;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.SourceDataLine;
 import javax.sound.sampled.TargetDataLine;
 
 public class Node {
-    final int CRC_POLYNOM = 0x9C;
-    final byte CRC_INITIAL = (byte) 0xFF;
+	int x = 0;
+	final boolean debug = true;
+	ByteArrayOutputStream debug_bos;
+	AudioInputStream debug_ais;
+	final File debug_in_wav = new File("INPUT.wav");
+	final File debug_out_wav = new File("OUTPUT2.wav");
 
-	final File file_tx = new File("INPUT.bin");
-	final File file_rx = null;
-	final byte node_id = 0x00;
+    final int CRC_POLYNOM = 0x9c;
+    final byte CRC_INITIAL = (byte) 0x00;
+
+//	final File file_tx = new File("INPUT.bin");
+    final File file_tx = null;
+//	final File file_rx = null;
+	final File file_rx = new File("OUTPUT.bin");
+	final byte node_id = (byte) 0x00;
 	final byte node_tx = (byte) 0xff;
 	final byte node_rx = (byte) 0xff;
 
@@ -34,8 +45,8 @@ public class Node {
 	final int header_size = 20;
 	final int max_retry = 5;
 	final float thresPower = 10;
-	final float thresPowerCoeff = 100;
-	final int thresBack = 500;
+	final float thresPowerCoeff = 0;
+	final int thresBack = 0;
 	final long ack_timeout = 200;
 	int retry = 0;
 	int num_frames = 0;
@@ -162,6 +173,7 @@ public class Node {
 				ByteArrayOutputStream bos = new ByteArrayOutputStream();
 				fis.read(bytesBuffer);
 				bytes_to_bits(bytesBuffer, bitsBuffer);
+				writeBits(bos, header);
 				writeBits(bos, get_mac_header(node_tx, node_id, false));
 				writeBits(bos, bitsBuffer);
 				writeBits(bos, get_crc(bytesBuffer, 0, bytesBuffer.length));
@@ -174,6 +186,14 @@ public class Node {
 	}
 
 	private void device_init() {
+		if (debug) {
+			debug_bos = new ByteArrayOutputStream();
+			try {
+				debug_ais = AudioSystem.getAudioInputStream(debug_in_wav);
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
 		if (file_rx != null) {
 			try {
 				fos = new FileOutputStream(file_rx);
@@ -182,14 +202,12 @@ public class Node {
 			}
 		}
 		AudioFormat format = getAudioFormat();
-		DataLine.Info infoSpeak = new DataLine.Info(SourceDataLine.class, format);
-		DataLine.Info infoMic = new DataLine.Info(TargetDataLine.class, format);
 		try {
-			speak = (SourceDataLine) AudioSystem.getLine(infoSpeak);
-			mic = (TargetDataLine) AudioSystem.getLine(infoMic);
-			speak.open(format);
+			speak = AudioSystem.getSourceDataLine(format);
+			mic = AudioSystem.getTargetDataLine(format);
+			speak.open();
 			speak.start();
-			mic.open(format);
+			mic.open();
 			mic.start();
 		} catch (LineUnavailableException e) {
 			e.printStackTrace();
@@ -231,7 +249,15 @@ public class Node {
 			if (stopped)
 				return;
 			if (state == 0) {
-				mic.read(buffer, 0, header_len*2);
+				if (debug) {
+					try {
+						debug_ais.read(buffer, 0, header_len*2);
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+				} else {
+					mic.read(buffer, 0, header_len*2);
+				}
 				newBuffer = new int[header_len];
 				bytes_to_ints(buffer, newBuffer);
 				for (int i = 1; i <= header_len; ++i) {
@@ -258,7 +284,15 @@ public class Node {
 				byte packetRestBuffer[] = new byte[packetRest_len * 2];
 				int[] packetRest = new int[packetRest_len];
 				int[] packet = new int[packet_len];
-				mic.read(packetRestBuffer, 0, packetRest_len * 2);
+				if (debug) {
+					try {
+						debug_ais.read(packetRestBuffer, 0, packetRest_len * 2);
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+				} else {
+					mic.read(packetRestBuffer, 0, packetRest_len * 2);
+				}
 				bytes_to_ints(packetRestBuffer, packetRest);
 				System.arraycopy(oldBuffer, start, packet, 0, header_len - start);
 				System.arraycopy(packetRest, 0, packet, header_len - start, packetRest_len);
@@ -283,7 +317,8 @@ public class Node {
 	}
 
 	private void packet_decode(int[] packet) {
-		System.out.println("Packet detected!!!");
+		System.out.println("Packet detected!!!" + x);
+		++x;
 		boolean decoded[] = new boolean[packet_len / spb];
 		for (int i = 0; i < decoded.length; ++i) {
 			float sumRmCarr = 0.f;
@@ -292,11 +327,14 @@ public class Node {
 			}
 			decoded[i] = sumRmCarr > 0.f;
 		}
-		if (bit8_to_byte(decoded, 0) != node_id)
+		if (bit8_to_byte(decoded, 0) != node_id) {
+			System.out.println("To: " + bit8_to_byte(decoded, 0));
 			return;
+		}
 		byte packet_src = bit8_to_byte(decoded, 8);
 		byte type = bit8_to_byte(decoded, 16);
 		if (type > 0x7f) {
+			System.out.println("ACK!");
 			// ACK!
 			get_ack = true;
 			return;
@@ -306,8 +344,10 @@ public class Node {
 			bits_to_bytes(decoded, decoded_bytes);
 			if (get_crc_byte(decoded_bytes, 3, frame_size / 8) != decoded_bytes[frame_size / 8 + 3]) {
 				// crc failed! pretend not detected
+				System.out.println("CRC failed!");
 				return;
 			} else if (file_rx != null) {
+				System.out.println("CRC true!");
 				// this is my packet! write it
 				try {
 					fos.write(decoded_bytes, 3, frame_size / 8);
@@ -319,25 +359,42 @@ public class Node {
 				writeBits(bos, get_mac_header(node_rx, node_id, true));
 				writeBits(bos, new boolean[frame_size + 8]);
 				byte[] to_send = bos.toByteArray();
-				speak.write(to_send, 0, to_send.length);
+				if (debug) {
+					try {
+						debug_bos.write(to_send);
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+				} else {
+					speak.write(to_send, 0, to_send.length);
+				}
 			}
 		}
 	}
 
 	private void send_frame(int frame_no) {
 		byte[] to_send = frame_list[frame_no];
-		speak.write(to_send, 0, to_send.length);
+		if (debug) {
+			try {
+				debug_bos.write(to_send);
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		} else {
+			speak.write(to_send, 0, to_send.length);
+		}
 	}
 
 	private boolean wait_ack() {
-		long start = System.currentTimeMillis();
-		while (System.currentTimeMillis() - start < ack_timeout) {
-			if (get_ack) {
-				get_ack = false;
-				return true;
-			}
-		}
-		return false;
+		return true;
+//		long start = System.currentTimeMillis();
+//		while (System.currentTimeMillis() - start < ack_timeout) {
+//			if (get_ack) {
+//				get_ack = false;
+//				return true;
+//			}
+//		}
+//		return false;
 	}
 
 	private void link_error() {
@@ -364,6 +421,20 @@ public class Node {
 			retry = 0;
 		}
 		System.out.println("Transmission complete!");
+		if (debug) {
+			AudioFormat format = getAudioFormat();
+			byte[] data = debug_bos.toByteArray();
+			try {
+				AudioSystem.write(new AudioInputStream(new ByteArrayInputStream(data), format, data.length), AudioFileFormat.Type.WAVE, debug_out_wav);
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+		try {
+			Thread.sleep(10000);
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		}
 		stopped = true;
 	}
 
