@@ -17,7 +17,6 @@ import javax.sound.sampled.SourceDataLine;
 import javax.sound.sampled.TargetDataLine;
 
 public class Node {
-	int x = 0;
 	final boolean debug = true;
 	ByteArrayOutputStream debug_bos;
 	AudioInputStream debug_ais;
@@ -31,11 +30,15 @@ public class Node {
 
 //	final File file_tx = new File("INPUT.bin");
 //	final File file_rx = null;
+//	final byte node_id = (byte) 0x00;
+//	final byte node_tx = (byte) 0x00;
+//	final byte node_rx = (byte) 0xff;
 	final File file_tx = null;
 	final File file_rx = new File("OUTPUT.bin");
 	final byte node_id = (byte) 0xff;
 	final byte node_tx = (byte) 0x00;
 	final byte node_rx = (byte) 0x00;
+
 
 	final int frame_size = 200;
 	final int amp = 32767;        // amplitude
@@ -245,6 +248,7 @@ public class Node {
 		float maxSyncPower = 0.f;
 		int start = 0;
 		int next_cur = 0;
+		int packet_no = 0;
 		float power = 0.f;
 		cur = buffer_len;
 
@@ -271,7 +275,7 @@ public class Node {
 				for (int j = 0; j < header_len; ++j) {
 					syncPower += ((float) header_ints[j] / amp) * ((float) large_buffer[cur+j-header_len+1] / amp);
 				}
-				if (cur > next_cur && syncPower > power * thresPowerCoeff && syncPower > maxSyncPower && syncPower > thresPower) {
+				if (cur >= next_cur && syncPower > power * thresPowerCoeff && syncPower > maxSyncPower && syncPower > thresPower) {
 					maxSyncPower = syncPower;
 					start = cur;
 				} else if (cur - start > thresBack && start != 0) {
@@ -280,9 +284,9 @@ public class Node {
 				}
 			} else {
 				if (cur - start == packet_len) {
-					System.out.println("Packet detected: " + x);
+					System.out.println("Packet detected: " + packet_no);
 //					System.out.println("Start is: " + start);
-					++x;
+					++packet_no;
 					boolean decoded[] = new boolean[packet_len/spb];
 					for (int j = 0; j < packet_len / spb; ++j) {
 						float sumRmCarr = 0.f;
@@ -293,22 +297,7 @@ public class Node {
 					packet_ana(decoded);
 					syncState = true;
 					start = 0;
-					next_cur = cur + buffer_len;
-//					cur += buffer_len;
-//					int x = (cur / buffer_len) * buffer_len;
-//					int bytesRead = 0;
-//					if (debug) {
-//						try {
-//							bytesRead = debug_ais.read(buffer, 0, buffer_len*2);
-//						} catch (IOException e) {
-//							e.printStackTrace();
-//						}
-//					} else {
-//						bytesRead = mic.read(buffer, 0, buffer_len*2);
-//					}
-//					if (bytesRead < buffer_len*2)
-//						return;
-//					bytes_to_ints(buffer, large_buffer, x);
+					next_cur = cur + header_len;
 				}
 			}
 			++cur;
@@ -378,7 +367,6 @@ public class Node {
 		if (debug) {
 			try {
 				debug_bos.write(to_send);
-				debug_bos.write(new byte[500]);
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
