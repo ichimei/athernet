@@ -330,7 +330,7 @@ public class Node {
 //		System.out.println("To me!");
 		byte packet_src = bit8_to_byte(decoded, 8);
 		byte type = bit8_to_byte(decoded, 16);
-		if (type > 0x7f) {
+		if ((type & 1) == 1) {
 			// ACK!
 //			System.out.println("ACK!");
 			get_ack = true;
@@ -345,7 +345,7 @@ public class Node {
 //				System.out.println("CRC failed!");
 				return;
 			} else if (file_rx != null) {
-				// this is my packet! write it
+				// this is correct packet! write it
 				System.out.println("Correct packet!");
 				try {
 					fos.write(decoded_bytes, 3, frame_size / 8);
