@@ -36,13 +36,14 @@ public class Node {
 	final float thresPower = 10;
 	final float thresPowerCoeff = 100;
 	final int thresBack = 500;
+	final long ack_timeout = 200;
 	int retry = 0;
-	int tx_lar = 0;
-	int rx_lfr = 0;
 	int num_frames = 0;
 	int retry_cnt = 0;
 
-	boolean get_ack = true;
+	boolean get_ack = false;
+	boolean stopped = false;
+
 	byte[] received_frame;
 
 	boolean[] header = new boolean[header_size];
@@ -69,10 +70,8 @@ public class Node {
 	private void run() {
 		frames_init(file_tx);
 		device_init();
+		new Thread(()->packet_detect()).start();
 		mac();
-		new Thread(() -> {
-		    packet_detect();
-		}).start();
 		device_stop();
 	}
 
@@ -229,6 +228,8 @@ public class Node {
 		int while_cnt = 0;
 
 		while (true) {
+			if (stopped)
+				return;
 			if (state == 0) {
 				mic.read(buffer, 0, header_len*2);
 				newBuffer = new int[header_len];
@@ -262,6 +263,10 @@ public class Node {
 				System.arraycopy(oldBuffer, start, packet, 0, header_len - start);
 				System.arraycopy(packetRest, 0, packet, header_len - start, packetRest_len);
 				packet_decode(packet);
+				maxSyncPower = 0.f;
+				state = 0;
+				start = 0;
+				start_cnt = 0;
 			}
 			++while_cnt;
 		}
@@ -309,6 +314,12 @@ public class Node {
 				} catch (IOException e) {
 					e.printStackTrace();
 				}
+				// send ack!
+				ByteArrayOutputStream bos = new ByteArrayOutputStream();
+				writeBits(bos, get_mac_header(node_rx, node_id, true));
+				writeBits(bos, new boolean[frame_size + 8]);
+				byte[] to_send = bos.toByteArray();
+				speak.write(to_send, 0, to_send.length);
 			}
 		}
 	}
@@ -318,8 +329,15 @@ public class Node {
 		speak.write(to_send, 0, to_send.length);
 	}
 
-	private boolean wait_ack(int frame_no) {
-		return true;
+	private boolean wait_ack() {
+		long start = System.currentTimeMillis();
+		while (System.currentTimeMillis() - start < ack_timeout) {
+			if (get_ack) {
+				get_ack = false;
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private void link_error() {
@@ -330,20 +348,23 @@ public class Node {
 		for (int i = 0; i < num_frames; ++i) {
 			System.out.println("Send frame " + i);
 			send_frame(i);
-			boolean ack = wait_ack(i);
+			boolean ack = wait_ack();
 			while (!ack) {
 				if (retry == max_retry) {
 					link_error();
+					stopped = true;
 					return;
 				}
 				++retry;
-				System.out.println("Send frame " + i + " retry " + retry);
+//				System.out.println("Send frame " + i + " retry " + retry);
 				send_frame(i);
-				ack = wait_ack(i);
+				ack = wait_ack();
 			}
-			System.out.println("ACK frame " + i);
+//			System.out.println("ACK frame " + i);
 			retry = 0;
 		}
+		System.out.println("Transmission complete!");
+		stopped = true;
 	}
 
 	public static void main(String[] args) {
