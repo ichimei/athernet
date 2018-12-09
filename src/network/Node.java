@@ -24,13 +24,13 @@ public class Node {
 	final File debug_in_wav = new File("INPUT.wav");
 	final File debug_out_wav = new File("OUTPUT2.wav");
 
-    final int CRC_POLYNOM = 0x9c;
-    final byte CRC_INITIAL = (byte) 0x00;
-    final int[] large_buffer = new int[44100 * 10000];
-    int cur = 0;
+	final int CRC_POLYNOM = 0x9c;
+	final byte CRC_INITIAL = (byte) 0x00;
+	final int[] large_buffer = new int[44100 * 10000];
+	int cur = 0;
 
-	final File file_tx = new File("input2to1.bin");
-	final File file_rx = new File("OUTPUT.bin");
+	final File file_tx = new File("input.bin");
+	final File file_rx = new File("output.bin");
 	final byte node_id = (byte) 0xff;
 	final byte node_tx = (byte) 0x00;
 //	final File file_tx = null;
@@ -38,7 +38,7 @@ public class Node {
 //	final byte node_id = (byte) 0x00;
 //	final byte node_tx = (byte) 0xff;
 
-	final long duration = 300000;
+	final long duration = 60000;
 	final int frame_size = 400;
 	final int amp = 32767;        // amplitude
 	final float fs = 44100;       // sample rate
@@ -320,7 +320,7 @@ public class Node {
 				bytes_to_ints(buffer, large_buffer, cur, buffer_len);
 				bytes_to_ints1(buffer, sound, buffer_len);
 				int sum = IntStream.of(sound).sum();
-				System.out.println(sum);
+//				System.out.println(sum);
 				synchronized(safe) {
 					if(sum<2000000) {
 //						System.out.println("__________________________");
@@ -403,7 +403,7 @@ public class Node {
 						e.printStackTrace();
 					}
 				}else{
-					System.out.println(received1.length);
+//					System.out.println(received1.length);
 					try{
 						fos.write(wrong_body, 4, frame_size / 8);
 					}catch(IOException e){
@@ -680,7 +680,7 @@ public class Node {
 					System.out.println("Back off");
 					wait_ack();
 				}
-//				System.out.println("Send frame " + i);
+				System.out.println("Send frame " + i);
 				if(wait_count==40) {
 					wait_count=0;
 					System.out.println("Wait! " + i);
