@@ -17,7 +17,9 @@ import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.SourceDataLine;
 import javax.sound.sampled.TargetDataLine;
+
 public class Node {
+
 	final boolean debug = false;
 	ByteArrayOutputStream debug_bos;
 	AudioInputStream debug_ais;
@@ -56,11 +58,11 @@ public class Node {
 	int packet_so_far = 0;
 
 	byte[][] received;
-	byte[][] received1;
+	// byte[][] received1;
 	Queue<Integer> ack_to_send;
 	boolean[] ack_get;
 	int[] count;
-	boolean[] ack_get1;
+	boolean[] ack_send;
 	boolean[] safe;
 	long[] start_time;
 	boolean stopped = false;
@@ -71,7 +73,7 @@ public class Node {
 	int[] header_ints = new int[header_size];
 	byte[] intv = new byte[200];
 	byte[][] frame_list;
-	byte[] wrong_body;
+	byte[] dummy_body = new byte[frame_size / 8];
 	boolean[] ack_body;
 	boolean[] ack_crc;
 	final int packet_len = (frame_size + 40) * spb;
@@ -130,6 +132,16 @@ public class Node {
 		}
 	}
 
+	private byte bit8_to_byte(boolean[] bit8, int offset) {
+		byte ret = 0;
+		for (int i = 0; i < 8; ++i) {
+			if (bit8[i + offset]) {
+				ret |= 1 << i;
+			}
+		}
+		return ret;
+	}
+
 //	private int[] bits_to_ints(boolean[] bits) {
 //		int[] ints = new int[spb*bits.length];
 //		for (int j = 0; j < bits.length; ++j) {
@@ -185,7 +197,6 @@ public class Node {
 			fp[i] = 10000.f - (i - header_size / 2) / halfLenHeader * 8000.f;
 
 		float cum = 0.f;
-
 		for (int i = 0; i < header_size; ++i) {
 			cum += fp[i];
 			int wave = (int) (amp * Math.sin(2 * Math.PI * cum / fs));
@@ -196,14 +207,14 @@ public class Node {
 		if (file == null) {
 			return;
 		}
-		try {
 
+		try {
 			FileInputStream fis = new FileInputStream(file);
 			int length = (int) (file.length() * 8);
 			num_frames = length / frame_size;
 			System.out.println(num_frames);
 			ack_get = new boolean[num_frames];
-			ack_get1 = new boolean[num_frames];
+			ack_send = new boolean[num_frames];
 			start_time = new long[num_frames];
 			count = new int[1];
 			count[0] = 0;
@@ -216,18 +227,15 @@ public class Node {
 			frame_list = new byte[num_frames][];
 			for (int i = 0; i < num_frames; ++i) {
 				ByteArrayOutputStream bos = new ByteArrayOutputStream();
-				ByteArrayOutputStream bos1 = new ByteArrayOutputStream();
 				fis.read(bytesBuffer);
 				bytes_to_bits(bytesBuffer, bitsBuffer);
-				writeBits(bos1, bitsBuffer);
-				wrong_body = bos1.toByteArray();
 				bos.write(header);
 				writeBits(bos, get_mac_header(node_tx, node_id, false, i));
 //				System.out.println(bos.toByteArray().length);
 				writeBits(bos, bitsBuffer);
 				writeBits(bos, get_crc(bytesBuffer, 0, bytesBuffer.length));
 				frame_list[i] = bos.toByteArray();
-				if(i==0) {
+				if (i == 0) {
 					ack_body = bitsBuffer;
 					ack_crc = get_crc(bytesBuffer, 0, bytesBuffer.length);
 				}
@@ -286,10 +294,12 @@ public class Node {
 		for (int i = 0; i < len; ++i)
 			ints[i + offset] = (data[2*i+1] << 8) | (data[2*i] & 0xff);
 	}
+
 	private void bytes_to_ints1(byte[] data, int[] ints, int len) {
 		for (int i = 0; i < len; ++i)
 			ints[i] = Math.abs((data[2*i+1] << 8) | (data[2*i] & 0xff));
 	}
+
 	private void packet_detect() {
 		int buffer_len = 1000;
 		byte buffer[] = new byte[buffer_len * 2];
@@ -321,14 +331,14 @@ public class Node {
 				bytes_to_ints1(buffer, sound, buffer_len);
 				int sum = IntStream.of(sound).sum();
 //				System.out.println(sum);
-				synchronized(safe) {
-					if(sum<2000000) {
+				synchronized (safe) {
+					if (sum < 2000000) {
 //						System.out.println("__________________________");
 						safe[0] = true;
 						synchronized(syncObj) {
 							syncObj.notify();
 						}
-					}else {
+					} else {
 						safe[0] = false;
 					}
 				}
@@ -383,45 +393,36 @@ public class Node {
 			++cur;
 		}
 		System.out.println("Packet detector stopped!");
-		synchronized(ack_get1) {
+		synchronized (ack_send) {
 			int count = 0;
-			for(int x=0;x<num_frames;x+=1) {
-				if(ack_get1[x]) count+=1;
+			for (int frame_no = 0; frame_no < num_frames; ++frame_no) {
+				if (ack_send[frame_no])
+					count++;
 			}
 			System.out.println(count);
 		}
-		synchronized(safe) {
+		synchronized (safe) {
 			safe[0] = true;
 		}
-		synchronized(received) {
-			for(int x = 0;x<num_frames;x+=1) {
-				System.out.println(x);
-				if(received[x]!=null) {
-					try{
-						fos.write(received[x], 4, frame_size / 8);
-					}catch(IOException e){
+		synchronized (received) {
+			for (int frame_no = 0; frame_no < num_frames; frame_no++) {
+				System.out.println(frame_no);
+				if (received[frame_no] != null) {
+					try {
+						fos.write(received[frame_no], 4, frame_size / 8);
+					} catch (IOException e) {
 						e.printStackTrace();
 					}
-				}else{
+				} else {
 //					System.out.println(received1.length);
-					try{
-						fos.write(wrong_body, 4, frame_size / 8);
-					}catch(IOException e){
+					try {
+						fos.write(dummy_body, 0, frame_size / 8);
+					} catch (IOException e) {
 						e.printStackTrace();
 					}
 				}
 			}
 		}
-	}
-
-	private byte bit8_to_byte(boolean[] bit8, int offset) {
-		byte ret = 0;
-		for (int i = 0; i < 8; ++i) {
-			if (bit8[i + offset]) {
-				ret |= 1 << i;
-			}
-		}
-		return ret;
 	}
 
 	private void packet_ana(boolean[] decoded) {
@@ -440,11 +441,11 @@ public class Node {
 			if (get_crc_byte(decoded_bytes, 4, frame_size / 8) != decoded_bytes[frame_size / 8 + 4]) {
 				System.out.println("Wrong ACK");
 				return;
-			}else {
+			} else {
 				if (packet_src == node_tx) {
-					synchronized(safe) {
+					synchronized (safe) {
 						safe[0] = true;
-						synchronized(syncObj) {
+						synchronized (syncObj) {
 							syncObj.notify();
 						}
 					}
@@ -452,18 +453,19 @@ public class Node {
 	//					syncObj.notify();
 	//				}
 					System.out.println("ACK: " + frame_no);
-					if(frame_no>=0 && frame_no<=ack_get.length) {
-						ack_get[frame_no] = true;
+					if (frame_no >= 0 && frame_no < ack_get.length) {
+//						ack_get[frame_no] = true;
 						boolean new_ack = false;
-						synchronized(ack_get) {
+						synchronized (ack_get) {
 							new_ack = !ack_get[frame_no];
 							ack_get[frame_no] = true;
+							if (new_ack) {
+								synchronized (count) {
+									count[0]++;
+								}
+							}
 						}
-						synchronized(count) {
-							if(new_ack)
-								count[0] += 1;
-						}
-					}else {
+					} else {
 						System.out.println("Wrong ACK");
 					}
 				} else {
@@ -484,21 +486,21 @@ public class Node {
 				System.out.println("CRC failed!");
 				return;
 			} else if (file_rx != null) {
-//				 this is correct packet!
-				synchronized(safe) {
+				// this is correct packet!
+				synchronized (safe) {
 					safe[0] = true;
 					synchronized(syncObj) {
 						syncObj.notify();
 					}
 				}
 				System.out.println("Correct packet: " + frame_no);
-				synchronized(ack_get1) {
-					if(frame_no<ack_get1.length) {
-						ack_get1[frame_no] = true;
+				synchronized(ack_send) {
+					if (frame_no < ack_send.length) {
+						ack_send[frame_no] = true;
 					}
 				}
 				synchronized(received) {
-					if(frame_no<received.length) {
+					if (frame_no < received.length) {
 						received[frame_no] = decoded_bytes;
 					}
 				}
@@ -507,6 +509,8 @@ public class Node {
 			}
 		}
 	}
+
+	// send ack
 	private void send_ack(int frame_no) {
 		ByteArrayOutputStream bos = new ByteArrayOutputStream();
 		try {
@@ -515,11 +519,11 @@ public class Node {
 			e1.printStackTrace();
 		}
 		writeBits(bos, get_mac_header(node_tx, node_id, true, frame_no));
-		synchronized(ack_body) {
-			writeBits(bos,ack_body);
+		synchronized (ack_body) {
+			writeBits(bos, ack_body);
 		}
-		synchronized(ack_crc) {
-			writeBits(bos,ack_crc);
+		synchronized (ack_crc) {
+			writeBits(bos, ack_crc);
 		}
 		byte[] to_send = bos.toByteArray();
 		if (debug) {
@@ -532,6 +536,8 @@ public class Node {
 			speak.write(to_send, 0, to_send.length);
 		}
 	}
+
+	// send a frame
 	private void send_frame(int frame_no) {
 		byte[] to_send = frame_list[frame_no];
 		if (debug) {
@@ -546,9 +552,9 @@ public class Node {
 		}
 	}
 
+	// wait for specified seconds
 	private void wait_ack() {
-		synchronized(syncObj)
-        {
+		synchronized (syncObj) {
 			//long start = System.currentTimeMillis();
         	try {
         		syncObj.wait(ack_timeout);
@@ -558,9 +564,23 @@ public class Node {
         }
 	}
 
+	// wait for 1 second
+	private void wait_ack1() {
+		synchronized (syncObj) {
+			try {
+				syncObj.wait(1000);
+			}catch(Exception e) {
+				e.printStackTrace();
+			}
+		}
+	}
+
+	@SuppressWarnings("unused")
 	private void link_error() {
 		System.out.println("link error");
 	}
+
+	// used in macperf
 	private void send_packet() {
 		ByteArrayOutputStream bos = new ByteArrayOutputStream();
 		try {
@@ -573,37 +593,31 @@ public class Node {
 		byte[] to_send = bos.toByteArray();
 		speak.write(to_send, 0, to_send.length);
 	}
-	private void wait_ack1() {
-		synchronized(syncObj) {
-			try {
-				syncObj.wait(1000);
-			}catch(Exception e) {
-				e.printStackTrace();
-			}
-		}
-	}
+
+	@SuppressWarnings("unused")
 	private void macperf() {
 		System.out.println("fuck you");
 		long start = System.currentTimeMillis();
 		int count = 0;
 		while(true) {
 			System.out.println(System.currentTimeMillis()-start);
-			if(System.currentTimeMillis()-start>=10000) {
+			if (System.currentTimeMillis() - start >= 10000) {
 				System.out.println(count);
 				start = System.currentTimeMillis();
 				break;
-			}else {
+			} else {
 				send_packet();
 				long start1 = System.currentTimeMillis();
 				wait_ack1();
-				if(System.currentTimeMillis()-start1<=1000)
-					count+=600;
+				if(System.currentTimeMillis() - start1 <= 1000)
+					count += 600;
 			}
 		}
 		System.out.println("qqqq"+count/10);
 		System.out.println("dsdsds");
 	}
-	private void send_ack1() {
+
+	private void send_ack_raw() {
 		ByteArrayOutputStream bos = new ByteArrayOutputStream();
 		try {
 			bos.write(header);
@@ -614,6 +628,7 @@ public class Node {
 		byte[] to_send = bos.toByteArray();
 		speak.write(to_send, 0, to_send.length);
 	}
+
 	private void wait_ack2() {
 		synchronized(syncObj) {
 			try {
@@ -623,52 +638,53 @@ public class Node {
 			}
 		}
 	}
+
+	@SuppressWarnings("unused")
 	private void macping() {
 		int count = 0;
 		int sum = 0;
-		while(count<10) {
+		while(count < 10) {
 			long start = System.currentTimeMillis();
-			send_ack1();
+			send_ack_raw();
 			wait_ack2();
 			long end = System.currentTimeMillis();
 			if(end-start>=2000) {
 				System.out.println("Time out");
 			}else {
 				count += 1;
-				System.out.println(end-start);
-				sum += end-start;
+				System.out.println(end - start);
+				sum += end - start;
 			}
 		}
-		System.out.println("dsdsds"+ sum/10);
+		System.out.println("dsdsds" + sum/10);
 	}
+
 	private void mac() {
 		int wait_count = 0;
 //		send_ack(5);
 		long start_send = System.currentTimeMillis();
-		while(!stopped) {
-			synchronized(count) {
-				if(count[0] == num_frames) {
+		while (!stopped) {
+			synchronized (count) {
+				if (count[0] == num_frames) {
 					break;
 				}
 			}
 			for (int i = 0; i < num_frames; ++i) {
-				synchronized(ack_to_send) {
-					if(!ack_to_send.isEmpty()) {
+				synchronized (ack_to_send) {
+					if (!ack_to_send.isEmpty()) {
 						boolean is_safe;
-						synchronized(safe) {
+						synchronized (safe) {
 							is_safe = safe[0];
 						}
-						if(!is_safe) {
+						if (!is_safe) {
 							System.out.println("Back off!!");
 							wait_ack();
 						}
-						if(ack_to_send!=null && ack_to_send.peek()!=null) {
-							send_ack(ack_to_send.poll());
-						}
+						send_ack(ack_to_send.poll());
 					}
 				}
-				synchronized(ack_get) {
-					if(ack_get[i]) {
+				synchronized (ack_get) {
+					if (ack_get[i]) {
 						continue;
 					}
 				}
@@ -676,22 +692,22 @@ public class Node {
 				synchronized(safe) {
 					is_safe = safe[0];
 				}
-				if(!is_safe) {
+				if (!is_safe) {
 					System.out.println("Back off");
 					wait_ack();
 				}
 				System.out.println("Send frame " + i);
-				if(wait_count==40) {
-					wait_count=0;
+				if (wait_count == 40) {
+					wait_count = 0;
 					System.out.println("Wait! " + i);
 					try {
 						Thread.sleep(1000);
-					}catch(Exception e) {
+					} catch(Exception e) {
 						e.printStackTrace();
 					}
 				}
 				send_frame(i);
-				wait_count+=1;
+				wait_count++;
 //				boolean ack = wait_ack(i);
 //				while (!ack) {
 //					if (retry == max_retry) {
@@ -709,26 +725,31 @@ public class Node {
 			}
 		}
 		System.out.println("Transmission complete! Mac stopped!");
+
 		long start_end = System.currentTimeMillis();
 		long time = start_end - start_send;
-		for (int x = 0;x<20;x+=1){
-			System.out.println("Transmission complete! Mac stopped!" + time);
-		}
-		while(!stopped) {
+
+		// for (int x = 0; x < 20; ++x) {
+		// 	System.out.println("Transmission complete! Mac stopped!" + time);
+		// }
+
+		// flush ack
+		while (!stopped) {
 			synchronized(ack_to_send) {
-				if(!ack_to_send.isEmpty()) {
+				if (!ack_to_send.isEmpty()) {
 					boolean is_safe;
-					synchronized(safe) {
+					synchronized (safe) {
 						is_safe = safe[0];
 					}
 					System.out.println("Back off!!");
-					if(!is_safe) {
+					if (!is_safe) {
 						wait_ack();
 					}
 					send_ack(ack_to_send.poll());
 				}
 			}
 		}
+
 		if (debug) {
 			AudioFormat format = getAudioFormat();
 			byte[] data = debug_bos.toByteArray();
