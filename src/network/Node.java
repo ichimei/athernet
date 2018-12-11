@@ -7,7 +7,7 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.LinkedList;
-import java.util.Queue;
+import java.util.concurrent.ArrayBlockingQueue;
 
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioSystem;
@@ -28,18 +28,18 @@ public class Node {
 
 	File file_rx = null;
 
-	final long duration = 60000;
-	final int frame_size = 400;
-	final int amp = 32767;        // amplitude
-	final float fs = 44100;       // sample rate
-	final float fc = 11025;       // frequency of carrier
-	final int spb = 3;            // samples per bit
-	final int header_size = 200;
-	final int max_retry = 10;
-	final float thresPower = 36;
-	final float thresPowerCoeff = 33;
-	final int thresBack = 1200;
-	final long ack_timeout = 1000;
+	final static long duration = 60000;
+	final static int frame_size = 400;
+	final static int amp = 32767;        // amplitude
+	final static float fs = 44100;       // sample rate
+	final static float fc = 11025;       // frequency of carrier
+	final static int spb = 3;            // samples per bit
+	final static int header_size = 200;
+	final static int max_retry = 10;
+	final static float thresPower = 36;
+	final static float thresPowerCoeff = 33;
+	final static int thresBack = 1200;
+	final static long ack_timeout = 1000;
 	int retry = 0;
 	int send_num_frames = 0;
 	int get_num_frames = 0;
@@ -48,8 +48,9 @@ public class Node {
 
 	byte[][] received;
 	// byte[][] received1;
-	Queue<Integer> ack_to_send = new LinkedList<Integer>();
-	Queue<File> files_to_send = new LinkedList<File>();
+	ArrayBlockingQueue<Integer> ack_to_send =
+			new ArrayBlockingQueue<Integer>(1024);
+	LinkedList<File> files_to_send = new LinkedList<File>();
 	boolean[] ack_get;
 	boolean[] ack_send = null;
 //	boolean[] safe;
@@ -85,7 +86,7 @@ public class Node {
 			Thread pd = new Thread(()->{
 				try {
 					packet_detect();
-				} catch (IOException e) {
+				} catch (IOException | InterruptedException e) {
 					e.printStackTrace();
 				}
 			});
@@ -96,11 +97,20 @@ public class Node {
 					e.printStackTrace();
 				}
 			});
+			Thread ak = new Thread(()->{
+				try {
+					ack_sender();
+				} catch (IOException | InterruptedException e) {
+					e.printStackTrace();
+				}
+			});
+			ak.start();
 			pd.start();
 			mc.start();
 
 			Thread.sleep(duration);
 			stopped = true;
+//			ak.join();
 			pd.join();
 			mc.join();
 
@@ -112,15 +122,15 @@ public class Node {
 		}
 	}
 
-	private static void bytes_to_bits(byte[] bytesBuffer, boolean[] bitsBuffer) {
-		for (int i = 0; i < bytesBuffer.length; ++i) {
-			byte b = bytesBuffer[i];
-			for (int j = 0; j < 8; ++j) {
-				bitsBuffer[i*8+j] = (b & 1) > 0;
-				b >>= 1;
-			}
-		}
-	}
+//	private static void bytes_to_bits(byte[] bytesBuffer, boolean[] bitsBuffer) {
+//		for (int i = 0; i < bytesBuffer.length; ++i) {
+//			byte b = bytesBuffer[i];
+//			for (int j = 0; j < 8; ++j) {
+//				bitsBuffer[i*8+j] = (b & 1) > 0;
+//				b >>= 1;
+//			}
+//		}
+//	}
 
 	private static boolean[] bytes_to_bits(byte[] bytesBuffer) {
 		boolean[] bitsBuffer = new boolean[bytesBuffer.length * 8];
@@ -210,7 +220,7 @@ public class Node {
 //		return ints;
 //	}
 
-	private void write_bits_analog(ByteArrayOutputStream bos, boolean[] bits) {
+	private static void write_bits_analog(ByteArrayOutputStream bos, boolean[] bits) {
 		for (int j = 0; j < bits.length; ++j) {
 			for (int k = 0; k < spb; ++k) {
 				int waveo = (int) (amp * Math.sin(2 * Math.PI * fc * k / fs) * (bits[j] ? 1 : -1));
@@ -220,27 +230,27 @@ public class Node {
 		}
 	}
 
-	private void write_bytes_analog(ByteArrayOutputStream bos, byte[] bytes) {
+	private static void write_bytes_analog(ByteArrayOutputStream bos, byte[] bytes) {
 		write_bits_analog(bos, bytes_to_bits(bytes));
 	}
 
-	private void write_byte_analog(ByteArrayOutputStream bos, byte bt) {
+	private static void write_byte_analog(ByteArrayOutputStream bos, byte bt) {
 		write_bits_analog(bos, byte_to_bit8(bt));
 	}
 
-	private byte[] get_mac_header(byte dest, byte src, boolean ack, int frame_no) {
+	private static byte[] get_mac_header(byte dest, byte src, boolean ack, int frame_no) {
 		byte[] mac_header = {dest, src, (byte) (ack ? 0xff : 0), (byte) frame_no};
 		return mac_header;
 	}
 
-	private byte get_crc(byte[] data, int offset, int len) {
+	private static byte get_crc(byte[] data, int offset, int len) {
 		CRC8 crc8 = new CRC8(CRC_POLYNOM, CRC_INITIAL);
 		crc8.update(data, offset, len);
 		byte crc = (byte) crc8.getValue();
 		return crc;
 	}
 
-	private byte get_crc(byte[] data) {
+	private static byte get_crc(byte[] data) {
 		return get_crc(data, 0, data.length);
 	}
 
@@ -327,12 +337,18 @@ public class Node {
 		mic.close();
 	}
 
-	private void bytes_to_ints(byte[] data, int[] ints, int offset, int len) {
+	private static void bytes_to_ints(byte[] data, int[] ints, int offset, int len) {
 		for (int i = 0; i < len; ++i)
 			ints[i + offset] = (data[2*i+1] << 8) | (data[2*i] & 0xff);
 	}
 
-	private void packet_detect() throws IOException {
+	private void ack_sender() throws IOException, InterruptedException {
+		while (!stopped) {
+			send_ack(ack_to_send.take());
+		}
+	}
+
+	private void packet_detect() throws IOException, InterruptedException {
 		int buffer_len = 1000;
 		byte buffer[] = new byte[buffer_len * 2];
 
@@ -384,14 +400,14 @@ public class Node {
 			}
 			++cur;
 		}
-		System.out.println("Packet detector stopped!");
+		System.out.println("Packet detector writing file...");
 		synchronized (ack_send) {
 			int count = 0;
 			for (int frame_no = 0; frame_no < get_num_frames; ++frame_no) {
 				if (ack_send[frame_no])
 					count++;
 			}
-			System.out.println(count);
+			System.out.println("Frames received: " + count);
 		}
 		synchronized (received) {
 			if (file_rx == null) {
@@ -401,25 +417,18 @@ public class Node {
 			for (int frame_no = 0; frame_no < get_num_frames; frame_no++) {
 				System.out.println(frame_no);
 				if (received[frame_no] != null) {
-					try {
-						fos.write(received[frame_no], 4, frame_size / 8);
-					} catch (IOException e) {
-						e.printStackTrace();
-					}
+					fos.write(received[frame_no], 4, frame_size / 8);
 				} else {
-//					System.out.println(received1.length);
-					try {
-						fos.write(dummy_body, 0, frame_size / 8);
-					} catch (IOException e) {
-						e.printStackTrace();
-					}
+					// shouldn't happen if success
+					fos.write(dummy_body, 0, frame_size / 8);
 				}
 			}
 			fos.close();
 		}
+		System.out.println("Packet detector stopped!");
 	}
 
-	private void packet_ana(boolean[] decoded) throws FileNotFoundException {
+	private void packet_ana(boolean[] decoded) throws FileNotFoundException, InterruptedException {
 //		System.out.println("There is a packet");
 		byte packet_dest = bit8_to_byte(decoded, 0);
 		if (packet_dest != node_id) {
@@ -498,7 +507,7 @@ public class Node {
 					}
 				}
 				// send ack!
-				ack_to_send.offer(frame_no);
+				ack_to_send.put(frame_no);
 			}
 		}
 	}
@@ -525,12 +534,13 @@ public class Node {
 
 	private void mac() throws InterruptedException, IOException {
 		while (!stopped) {
-			if (files_to_send.isEmpty()) {
-				break;
-			}
 			File file = files_to_send.poll();
+			if (file == null) {
+				System.out.println("no file to send");
+				continue;
+			}
 			send_file_init(file);
-//			send_file_meta();
+			send_file_meta();
 			synchronized (packet_so_far) {
 				packet_so_far = 0;
 			}
@@ -542,13 +552,6 @@ public class Node {
 					}
 				}
 				int wait_count = 0;
-				for (int i = 1; i <= get_num_frames; ++i) {
-					synchronized (ack_to_send) {
-						if (!ack_to_send.isEmpty()) {
-							send_ack(ack_to_send.poll());
-						}
-					}
-				}
 				for (int i = 1; i <= send_num_frames; ++i) {
 					synchronized (ack_get) {
 						if (ack_get[i]) {
@@ -566,23 +569,14 @@ public class Node {
 				}
 			}
 		}
-		System.out.println("Mac has sent all packets!");
-
-		// flush ack
-		while (!stopped) {
-			synchronized(ack_to_send) {
-				if (!ack_to_send.isEmpty()) {
-					send_ack(ack_to_send.poll());
-				}
-			}
-		}
 		System.out.println("Mac has done!");
 	}
 
-	public static void main(String[] args) {
+	public static void main(String[] args) throws InterruptedException {
 		final File file_1 = new File("input.bin");
 		Node node = new Node();
-		node.files_to_send.offer(file_1);
+		node.files_to_send.add(file_1);
+		System.out.println("KAI");
 		node.run();
 	}
 
