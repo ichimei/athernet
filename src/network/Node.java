@@ -6,7 +6,6 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.util.LinkedList;
 import java.util.concurrent.ArrayBlockingQueue;
 
 import javax.sound.sampled.AudioFormat;
@@ -21,7 +20,7 @@ public class Node {
 	final static byte CRC_INITIAL = (byte) 0x00;
 
 	final static byte node_id = (byte) 0x00;
-	final static byte node_tx = (byte) 0xff;
+	final static byte node_tx = (byte) 0x00;
 
 	final int[] large_buffer = new int[44100 * 10000];
 	int cur = 0;
@@ -50,7 +49,8 @@ public class Node {
 	// byte[][] received1;
 	ArrayBlockingQueue<Integer> ack_to_send =
 			new ArrayBlockingQueue<Integer>(1024);
-	LinkedList<File> files_to_send = new LinkedList<File>();
+	ArrayBlockingQueue<File> files_to_send =
+			new ArrayBlockingQueue<File>(1024);
 	boolean[] ack_get;
 	boolean[] ack_send = null;
 //	boolean[] safe;
@@ -185,7 +185,7 @@ public class Node {
 	private static int bytes_to_int32(byte[] bytes, int offset) {
 		int it = 0;
 		for (int i = 0; i < 4; ++i) {
-			it |= bytes[i] << (8 * i);
+			it |= bytes[i + offset] << (8 * i);
 		}
 		return it;
 	}
@@ -414,7 +414,7 @@ public class Node {
 				return;
 			}
 			FileOutputStream fos = new FileOutputStream(file_rx);
-			for (int frame_no = 0; frame_no < get_num_frames; frame_no++) {
+			for (int frame_no = 1; frame_no <= get_num_frames; frame_no++) {
 				System.out.println(frame_no);
 				if (received[frame_no] != null) {
 					fos.write(received[frame_no], 4, frame_size / 8);
@@ -487,14 +487,16 @@ public class Node {
 				System.out.println("Correct packet: " + frame_no);
 				if (frame_no == 0) {
 					if (ack_send == null) {
-						int length = bytes_to_int32(decoded_bytes, 0);
-						String filename = bytes_to_str(decoded_bytes, 4);
+						int length = bytes_to_int32(decoded_bytes, 4);
+						String filename = bytes_to_str(decoded_bytes, 8);
 						file_rx = new File(filename + ".out");
+						System.out.println("length: " + length);
+						System.out.println("filename: " + filename);
 						get_num_frames = (length * 8) / frame_size;
 						if ((length * 8) % frame_size > 0)
 							get_num_frames++;
-						received = new byte[get_num_frames][];
-						ack_send = new boolean[get_num_frames];
+						received = new byte[get_num_frames + 1][];
+						ack_send = new boolean[get_num_frames + 1];
 						ack_send[0] = true;
 					}
 				} else {
@@ -534,11 +536,7 @@ public class Node {
 
 	private void mac() throws InterruptedException, IOException {
 		while (!stopped) {
-			File file = files_to_send.poll();
-			if (file == null) {
-				System.out.println("no file to send");
-				continue;
-			}
+			File file = files_to_send.take();
 			send_file_init(file);
 			send_file_meta();
 			synchronized (packet_so_far) {
@@ -575,7 +573,7 @@ public class Node {
 	public static void main(String[] args) throws InterruptedException {
 		final File file_1 = new File("input.bin");
 		Node node = new Node();
-		node.files_to_send.add(file_1);
+		node.files_to_send.put(file_1);
 		System.out.println("KAI");
 		node.run();
 	}
