@@ -430,6 +430,14 @@ public class Node {
 
 	private void packet_ana(boolean[] decoded) throws FileNotFoundException, InterruptedException {
 //		System.out.println("There is a packet");
+		byte decoded_bytes[] = new byte[decoded.length / 8];
+		bits_to_bytes(decoded, decoded_bytes);
+		if (get_crc(decoded_bytes, 0, frame_size / 8 + 4)
+				!= decoded_bytes[frame_size / 8 + 4]) {
+			System.out.println("CRC failed!");
+			return;
+		}
+
 		byte packet_dest = bit8_to_byte(decoded, 0);
 		if (packet_dest != node_id) {
 			System.out.println("To: " + bit8_to_byte(decoded, 0));
@@ -439,35 +447,25 @@ public class Node {
 		byte type = bit8_to_byte(decoded, 16);
 		int frame_no = bit8_to_byte(decoded, 24) & 0xff;
 		if (type == (byte) 0xff) {
-			// ACK type
-			byte decoded_bytes[] = new byte[decoded.length / 8];
-			bits_to_bytes(decoded, decoded_bytes);
-			if (get_crc(decoded_bytes, 0, frame_size / 8 + 4)
-					!= decoded_bytes[frame_size / 8 + 4]) {
-				System.out.println("Wrong ACK");
+			if (packet_src != node_tx) {
+				System.out.println("Who is that?");
 				return;
-			} else {
-				if (packet_src == node_tx) {
-					System.out.println("ACK: " + frame_no);
-					synchronized (ack_get) {
-						boolean new_ack = !ack_get[frame_no];
-						if (new_ack) {
-							ack_get[frame_no] = true;
-							if (frame_no == 0) {
-								synchronized (syncObj) {
-									syncObj.notify();
-								}
-							} else {
-								synchronized (packet_so_far) {
-									packet_so_far++;
-								}
-							}
+			}
+			System.out.println("ACK: " + frame_no);
+			synchronized (ack_get) {
+				boolean new_ack = !ack_get[frame_no];
+				if (new_ack) {
+					ack_get[frame_no] = true;
+					if (frame_no == 0) {
+						synchronized (syncObj) {
+							syncObj.notify();
+						}
+					} else {
+						synchronized (packet_so_far) {
+							packet_so_far++;
 						}
 					}
-				} else {
-					System.out.println("Who is that?");
 				}
-				return;
 			}
 		} else {
 			if (packet_src != node_tx) {
@@ -475,42 +473,32 @@ public class Node {
 				return;
 			}
 			// normal packet!
-			byte decoded_bytes[] = new byte[decoded.length / 8];
-			bits_to_bytes(decoded, decoded_bytes);
-			if (get_crc(decoded_bytes, 0, frame_size / 8 + 4)
-					!= decoded_bytes[frame_size / 8 + 4]) {
-				// crc failed! pretend not detected
-				System.out.println("CRC failed!");
-				return;
+			System.out.println("Correct packet: " + frame_no);
+			if (frame_no == 0) {
+				if (ack_send == null) {
+					int length = bytes_to_int32(decoded_bytes, 4);
+					String filename = bytes_to_str(decoded_bytes, 8);
+					file_rx = new File(filename + ".out");
+					System.out.println("length: " + length);
+					System.out.println("filename: " + filename);
+					get_num_frames = (length * 8) / frame_size;
+					if ((length * 8) % frame_size > 0)
+						get_num_frames++;
+					received = new byte[get_num_frames + 1][];
+					ack_send = new boolean[get_num_frames + 1];
+					ack_send[0] = true;
+				}
 			} else {
-				// this is correct packet!
-				System.out.println("Correct packet: " + frame_no);
-				if (frame_no == 0) {
-					if (ack_send == null) {
-						int length = bytes_to_int32(decoded_bytes, 4);
-						String filename = bytes_to_str(decoded_bytes, 8);
-						file_rx = new File(filename + ".out");
-						System.out.println("length: " + length);
-						System.out.println("filename: " + filename);
-						get_num_frames = (length * 8) / frame_size;
-						if ((length * 8) % frame_size > 0)
-							get_num_frames++;
-						received = new byte[get_num_frames + 1][];
-						ack_send = new boolean[get_num_frames + 1];
-						ack_send[0] = true;
-					}
-				} else {
-					synchronized (ack_send) {
-						boolean ack_sent = ack_send[frame_no];
-						if (!ack_sent) {
-							ack_send[frame_no] = true;
-							received[frame_no] = decoded_bytes;
-						}
+				synchronized (ack_send) {
+					boolean ack_sent = ack_send[frame_no];
+					if (!ack_sent) {
+						ack_send[frame_no] = true;
+						received[frame_no] = decoded_bytes;
 					}
 				}
-				// send ack!
-				ack_to_send.put(frame_no);
 			}
+			// send ack!
+			ack_to_send.put(frame_no);
 		}
 	}
 
