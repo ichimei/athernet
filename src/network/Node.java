@@ -10,7 +10,6 @@ import java.util.LinkedList;
 import java.util.Queue;
 
 import javax.sound.sampled.AudioFormat;
-import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.SourceDataLine;
@@ -18,27 +17,16 @@ import javax.sound.sampled.TargetDataLine;
 
 public class Node {
 
-	final boolean debug = false;
-	ByteArrayOutputStream debug_bos;
-	AudioInputStream debug_ais;
-	final File debug_in_wav = new File("INPUT.wav");
-	final File debug_out_wav = new File("OUTPUT2.wav");
-
 	final static int CRC_POLYNOM = 0x9c;
 	final static byte CRC_INITIAL = (byte) 0x00;
+
+	final static byte node_id = (byte) 0x00;
+	final static byte node_tx = (byte) 0xff;
+
 	final int[] large_buffer = new int[44100 * 10000];
 	int cur = 0;
 
-	final File file_tx = new File("input.bin");
-	final static byte node_id = (byte) 0x00;
-	final static byte node_tx = (byte) 0xff;
-//	final File file_tx = null;
-//	final File file_rx = new File("fuck.bin");
-//	final byte node_id = (byte) 0x00;
-//	final byte node_tx = (byte) 0xff;
-
-	FileOutputStream fos = null;
-	File file_rx;
+	File file_rx = null;
 
 	final long duration = 60000;
 	final int frame_size = 400;
@@ -63,7 +51,7 @@ public class Node {
 	Queue<Integer> ack_to_send = new LinkedList<Integer>();
 	Queue<File> files_to_send = new LinkedList<File>();
 	boolean[] ack_get;
-	boolean[] ack_send;
+	boolean[] ack_send = null;
 //	boolean[] safe;
 	boolean stopped = false;
 
@@ -97,7 +85,7 @@ public class Node {
 			Thread pd = new Thread(()->{
 				try {
 					packet_detect();
-				} catch (FileNotFoundException e) {
+				} catch (IOException e) {
 					e.printStackTrace();
 				}
 			});
@@ -344,7 +332,7 @@ public class Node {
 			ints[i + offset] = (data[2*i+1] << 8) | (data[2*i] & 0xff);
 	}
 
-	private void packet_detect() throws FileNotFoundException {
+	private void packet_detect() throws IOException {
 		int buffer_len = 1000;
 		byte buffer[] = new byte[buffer_len * 2];
 
@@ -405,25 +393,30 @@ public class Node {
 			}
 			System.out.println(count);
 		}
-//		synchronized (received) {
-//			for (int frame_no = 0; frame_no < num_frames; frame_no++) {
-//				System.out.println(frame_no);
-//				if (received[frame_no] != null) {
-//					try {
-//						fos.write(received[frame_no], 4, frame_size / 8);
-//					} catch (IOException e) {
-//						e.printStackTrace();
-//					}
-//				} else {
-////					System.out.println(received1.length);
-//					try {
-//						fos.write(dummy_body, 0, frame_size / 8);
-//					} catch (IOException e) {
-//						e.printStackTrace();
-//					}
-//				}
-//			}
-//		}
+		synchronized (received) {
+			if (file_rx == null) {
+				return;
+			}
+			FileOutputStream fos = new FileOutputStream(file_rx);
+			for (int frame_no = 0; frame_no < get_num_frames; frame_no++) {
+				System.out.println(frame_no);
+				if (received[frame_no] != null) {
+					try {
+						fos.write(received[frame_no], 4, frame_size / 8);
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+				} else {
+//					System.out.println(received1.length);
+					try {
+						fos.write(dummy_body, 0, frame_size / 8);
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+				}
+			}
+			fos.close();
+		}
 	}
 
 	private void packet_ana(boolean[] decoded) throws FileNotFoundException {
@@ -447,24 +440,20 @@ public class Node {
 			} else {
 				if (packet_src == node_tx) {
 					System.out.println("ACK: " + frame_no);
-					if (frame_no >= 0 && frame_no <= ack_get.length) {
-						synchronized (ack_get) {
-							boolean new_ack = !ack_get[frame_no];
-							if (new_ack) {
-								ack_get[frame_no] = true;
-								if (frame_no == 0) {
-									synchronized (syncObj) {
-										syncObj.notify();
-									}
-								} else {
-									synchronized (packet_so_far) {
-										packet_so_far++;
-									}
+					synchronized (ack_get) {
+						boolean new_ack = !ack_get[frame_no];
+						if (new_ack) {
+							ack_get[frame_no] = true;
+							if (frame_no == 0) {
+								synchronized (syncObj) {
+									syncObj.notify();
+								}
+							} else {
+								synchronized (packet_so_far) {
+									packet_so_far++;
 								}
 							}
 						}
-					} else {
-						System.out.println("Wrong ACK");
 					}
 				} else {
 					System.out.println("Who is that?");
@@ -488,15 +477,17 @@ public class Node {
 				// this is correct packet!
 				System.out.println("Correct packet: " + frame_no);
 				if (frame_no == 0) {
-					int length = bytes_to_int32(decoded_bytes, 0);
-					String filename = bytes_to_str(decoded_bytes, 4);
-					file_rx = new File(filename);
-					get_num_frames = (length * 8) / frame_size;
-					if ((length * 8) % frame_size > 0)
-						get_num_frames++;
-					received = new byte[get_num_frames][];
-					ack_send = new boolean[get_num_frames];
-					ack_send[0] = true;
+					if (ack_send == null) {
+						int length = bytes_to_int32(decoded_bytes, 0);
+						String filename = bytes_to_str(decoded_bytes, 4);
+						file_rx = new File(filename + ".out");
+						get_num_frames = (length * 8) / frame_size;
+						if ((length * 8) % frame_size > 0)
+							get_num_frames++;
+						received = new byte[get_num_frames][];
+						ack_send = new boolean[get_num_frames];
+						ack_send[0] = true;
+					}
 				} else {
 					synchronized (ack_send) {
 						boolean ack_sent = ack_send[frame_no];
@@ -539,7 +530,7 @@ public class Node {
 			}
 			File file = files_to_send.poll();
 			send_file_init(file);
-			send_file_meta();
+//			send_file_meta();
 			synchronized (packet_so_far) {
 				packet_so_far = 0;
 			}
@@ -551,12 +542,14 @@ public class Node {
 					}
 				}
 				int wait_count = 0;
-				for (int i = 0; i < get_num_frames; ++i) {
+				for (int i = 1; i <= get_num_frames; ++i) {
 					synchronized (ack_to_send) {
 						if (!ack_to_send.isEmpty()) {
 							send_ack(ack_to_send.poll());
 						}
 					}
+				}
+				for (int i = 1; i <= send_num_frames; ++i) {
 					synchronized (ack_get) {
 						if (ack_get[i]) {
 							continue;
@@ -573,7 +566,7 @@ public class Node {
 				}
 			}
 		}
-		System.out.println("Transmission complete! Mac stopped!");
+		System.out.println("Mac has sent all packets!");
 
 		// flush ack
 		while (!stopped) {
@@ -583,6 +576,7 @@ public class Node {
 				}
 			}
 		}
+		System.out.println("Mac has done!");
 	}
 
 	public static void main(String[] args) {
