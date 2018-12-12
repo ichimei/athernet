@@ -3,4 +3,4 @@
 !/.gitignore
 !/.classpath
 !/.project
-!/diff.py
+!/*.py

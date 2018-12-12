@@ -1,10 +1,14 @@
 package network;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FileReader;
 import java.io.IOException;
+import java.net.InetAddress;
+import java.util.ArrayList;
 import java.util.concurrent.ArrayBlockingQueue;
 
 import javax.sound.sampled.AudioFormat;
@@ -15,16 +19,23 @@ import javax.sound.sampled.TargetDataLine;
 
 public class Node {
 
+	final static byte TYPE_NORMAL = (byte) 0x00;
+	final static byte TYPE_ACK = (byte) 0xff;
+	final static byte TYPE_UDP_SEND = (byte) 0x0f;
+	final static byte TYPE_UDP_RECV = (byte) 0xf0;
 	final static int CRC_POLYNOM = 0x9c;
 	final static byte CRC_INITIAL = (byte) 0x00;
 
-	final static byte node_id = (byte) 0x00;
-	final static byte node_tx = (byte) 0x00;
+	final static byte NODE_ID = (byte) 0x00;
+	final static byte NODE_TX = (byte) 0x00;
+	final static int NODE_IP = 0;
 
-	final int[] large_buffer = new int[44100 * 10000];
+	final int[] large_buffer = new int[44100 * 1000];
 	int cur = 0;
 
 	File file_rx = null;
+	File notify_file = new File("./tmp/nat.notify");
+	File notify_rfile = new File("./tmp/natr.notify");
 
 	final static long duration = 60000;
 	final static int frame_size = 400;
@@ -75,7 +86,7 @@ public class Node {
 		return new AudioFormat(sampleRate, sampleSizeInBits, channels, signed, bigEndian);
 	}
 
-	private void run() {
+	public void run() {
 		try {
 
 			frame_init();
@@ -179,10 +190,25 @@ public class Node {
 		}
 	}
 
+	private static void int16_to_bytes(int it, byte[] bytes, int offset) {
+		for (int i = 0; i < 2; ++i) {
+			bytes[i + offset] = (byte) (it & 0xff);
+			it >>= 8;
+		}
+	}
+
 	private static int bytes_to_int32(byte[] bytes, int offset) {
 		int it = 0;
 		for (int i = 0; i < 4; ++i) {
-			it |= bytes[i + offset] << (8 * i);
+			it |= (bytes[i + offset] & 0xff) << (8 * i);
+		}
+		return it;
+	}
+
+	private static int bytes_to_int16(byte[] bytes, int offset) {
+		int it = 0;
+		for (int i = 0; i < 2; ++i) {
+			it |= (bytes[i + offset] & 0xff) << (8 * i);
 		}
 		return it;
 	}
@@ -196,7 +222,7 @@ public class Node {
 
 	private static String bytes_to_str(byte[] bytes, int offset) {
 		String s = new String();
-		for (int i = 0; i < 21; ++i) {
+		for (int i = 0;; ++i) {
 			byte b = bytes[offset + i];
 			if (b != 0) {
 				s += (char) b;
@@ -235,8 +261,8 @@ public class Node {
 		write_bits_analog(bos, byte_to_bit8(bt));
 	}
 
-	private static byte[] get_mac_header(byte dest, byte src, boolean ack, int frame_no) {
-		byte[] mac_header = {dest, src, (byte) (ack ? 0xff : 0), (byte) frame_no};
+	private static byte[] get_mac_header(byte dest, byte src, byte type, int frame_no) {
+		byte[] mac_header = {dest, src, type, (byte) frame_no};
 		return mac_header;
 	}
 
@@ -285,9 +311,78 @@ public class Node {
 		for (int i = 0; i <= send_num_frames + 1; ++i) {
 			ByteArrayOutputStream phyPayloadStream = new ByteArrayOutputStream();
 			ByteArrayOutputStream bos = new ByteArrayOutputStream();
-			phyPayloadStream.write(get_mac_header(node_tx, node_id, false, i));
+			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_NORMAL, i));
 			if (i == 0 || i == send_num_frames + 1) {
 				int32_to_bytes((int) file.length(), macPayload, 0);
+				str_to_bytes(file.getName(), macPayload, 4);
+			} else {
+				fis.read(macPayload);
+			}
+			phyPayloadStream.write(macPayload);
+			byte[] phyPayload = phyPayloadStream.toByteArray();
+			bos.write(header);
+			write_bytes_analog(bos, phyPayload);
+			write_byte_analog(bos, get_crc(phyPayload));
+			frame_list[i] = bos.toByteArray();
+		}
+
+		fis.close();
+	}
+
+	private void send_file_init_inline(File file) throws IOException {
+		BufferedReader abc = new BufferedReader(new FileReader(file));
+		ArrayList<String> lines = new ArrayList<String>();
+		String line;
+		while((line = abc.readLine()) != null) {
+		    lines.add(line);
+		}
+		abc.close();
+		String[] data = lines.toArray(new String[]{});
+		send_num_frames = data.length;
+	    System.out.println("Num frames: " + send_num_frames);
+		ack_get = new boolean[send_num_frames + 2];
+		byte[] macPayload = new byte[frame_size / 8];
+		frame_list = new byte[send_num_frames + 2][];
+
+		for (int i = 0; i <= send_num_frames + 1; ++i) {
+			ByteArrayOutputStream phyPayloadStream = new ByteArrayOutputStream();
+			ByteArrayOutputStream bos = new ByteArrayOutputStream();
+			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_UDP_SEND, i));
+			if (i == 0 || i == send_num_frames + 1) {
+				int32_to_bytes(send_num_frames, macPayload, 0);
+				str_to_bytes(file.getName(), macPayload, 4);
+			} else {
+				str_to_bytes(data[i-1], macPayload, 6);
+			}
+			phyPayloadStream.write(macPayload);
+			byte[] phyPayload = phyPayloadStream.toByteArray();
+			bos.write(header);
+			write_bytes_analog(bos, phyPayload);
+			write_byte_analog(bos, get_crc(phyPayload));
+			frame_list[i] = bos.toByteArray();
+		}
+	}
+
+	private void send_file_init_inline_rv(File file) throws InterruptedException, IOException {
+		while (!notify_rfile.exists()) {
+			Thread.sleep(100);
+		}
+		FileInputStream fis = new FileInputStream(file);
+		System.out.println("Start to send: " + file.getName());
+		int length = (int) file.length();
+		send_num_frames = length * 8 / frame_size;
+		System.out.println("File length: " + length);
+		System.out.println("Num frames: " + send_num_frames);
+		ack_get = new boolean[send_num_frames + 2];
+		byte[] macPayload = new byte[frame_size / 8];
+		frame_list = new byte[send_num_frames + 2][];
+
+		for (int i = 0; i <= send_num_frames + 1; ++i) {
+			ByteArrayOutputStream phyPayloadStream = new ByteArrayOutputStream();
+			ByteArrayOutputStream bos = new ByteArrayOutputStream();
+			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_UDP_RECV, i));
+			if (i == 0 || i == send_num_frames + 1) {
+				int32_to_bytes(send_num_frames, macPayload, 0);
 				str_to_bytes(file.getName(), macPayload, 4);
 			} else {
 				fis.read(macPayload);
@@ -353,13 +448,13 @@ public class Node {
 			ints[i + offset] = (data[2*i+1] << 8) | (data[2*i] & 0xff);
 	}
 
-	private void ack_sender() throws IOException, InterruptedException {
+	public void ack_sender() throws IOException, InterruptedException {
 		while (!stopped) {
 			send_ack(ack_to_send.take());
 		}
 	}
 
-	private void packet_detect() throws IOException, InterruptedException {
+	public void packet_detect() throws IOException, InterruptedException {
 		int buffer_len = 1000;
 		byte buffer[] = new byte[buffer_len * 2];
 
@@ -419,24 +514,24 @@ public class Node {
 		bits_to_bytes(decoded, decoded_bytes);
 		if (get_crc(decoded_bytes, 0, frame_size / 8 + 4)
 				!= decoded_bytes[frame_size / 8 + 4]) {
-			System.out.println("CRC failed!");
+//			System.out.println("CRC failed!");
 			return;
 		}
 
 		byte packet_dest = bit8_to_byte(decoded, 0);
-		if (packet_dest != node_id) {
+		if (packet_dest != NODE_ID) {
 			System.out.println("To: " + bit8_to_byte(decoded, 0));
 			return;
 		}
 		byte packet_src = bit8_to_byte(decoded, 8);
 		byte type = bit8_to_byte(decoded, 16);
 		int frame_no = bit8_to_byte(decoded, 24) & 0xff;
-		if (type == (byte) 0xff) {
-			if (packet_src != node_tx) {
+		if (type == TYPE_ACK) {
+			if (packet_src != NODE_TX) {
 				System.out.println("Who is that?");
 				return;
 			}
-			System.out.println("ACK: " + frame_no);
+//			System.out.println("ACK: " + frame_no);
 			synchronized (ack_get) {
 				boolean new_ack = !ack_get[frame_no];
 				if (new_ack) {
@@ -456,8 +551,8 @@ public class Node {
 					}
 				}
 			}
-		} else {
-			if (packet_src != node_tx) {
+		} else if (type == TYPE_NORMAL) {
+			if (packet_src != NODE_TX) {
 				System.out.println("Who is that?");
 				return;
 			}
@@ -480,6 +575,7 @@ public class Node {
 			} else if (frame_no == get_num_frames + 1) {
 				if (ack_send != null) {
 					ack_send = null;
+					ack_to_send.clear();
 					System.out.println("writing file...");
 					synchronized (received) {
 						if (file_rx == null) {
@@ -515,6 +611,109 @@ public class Node {
 			}
 			// send ack!
 			ack_to_send.put(frame_no);
+		} else if (type == TYPE_UDP_SEND) {
+			if (packet_src != NODE_TX) {
+				System.out.println("Who is that?");
+				return;
+			}
+			if (frame_no == 0) {
+				if (ack_send == null) {
+					get_num_frames = bytes_to_int32(decoded_bytes, 4);
+					String filename = bytes_to_str(decoded_bytes, 8);
+					file_rx = new File(filename + ".out");
+					System.out.println("UDP num: " + get_num_frames);
+					System.out.println("filename: " + filename);
+					received = new byte[get_num_frames + 1][];
+					ack_send = new boolean[get_num_frames + 1];
+					System.out.println("Warning: " + ack_send.length);
+					ack_send[0] = true;
+				}
+			} else if (frame_no == get_num_frames + 1) {
+				if (ack_send != null) {
+					ack_send = null;
+					ack_to_send.clear();
+					System.out.println("writing file...");
+					synchronized (received) {
+						if (file_rx == null) {
+							return;
+						}
+						FileOutputStream fos = new FileOutputStream(file_rx);
+						for (int no = 1; no <= get_num_frames; no++) {
+							if (received[no] != null) {
+								String line = bytes_to_str(received[no], 10);
+								System.out.println("Line is: " + line);
+								fos.write(line.getBytes());
+								fos.write('\n');
+							} else {
+								// shouldn't happen if success
+							}
+						}
+						fos.close();
+					}
+					System.out.println("file written!");
+					notify_file.createNewFile();
+					received = null;
+				}
+			} else {
+				if (ack_send == null)
+					return;
+				synchronized (ack_send) {
+					boolean ack_sent = ack_send[frame_no];
+					if (!ack_sent) {
+						synchronized (received_so_far) {
+							received_so_far++;
+						}
+						ack_send[frame_no] = true;
+						received[frame_no] = decoded_bytes;
+					}
+				}
+			}
+			// send ack!
+			ack_to_send.put(frame_no);
+		} else if (type == TYPE_UDP_RECV) {
+			if (packet_src != NODE_TX) {
+				System.out.println("Who is that?");
+				return;
+			}
+			if (frame_no == 0) {
+				if (ack_send == null) {
+					get_num_frames = bytes_to_int32(decoded_bytes, 4);
+					received = new byte[get_num_frames + 1][];
+					ack_send = new boolean[get_num_frames + 1];
+					ack_send[0] = true;
+				}
+			} else if (frame_no == get_num_frames + 1) {
+				if (ack_send != null) {
+					ack_send = null;
+					ack_to_send.clear();
+					System.out.println("printing data...");
+					for (int i = 1; i <= get_num_frames; ++i) {
+						byte[] ip_addr = new byte[4];
+						System.arraycopy(received[i], 4, ip_addr, 0, 4);
+						String addr = InetAddress.getByAddress(ip_addr).getHostAddress();
+						int port = bytes_to_int16(received[i], 8);
+						String data = bytes_to_str(received[i], 10);
+						System.out.println("addr: " + addr + ", port: " + port + ", data: " + data);
+					}
+					System.out.println("data written!");
+					received = null;
+				}
+			} else {
+				if (ack_send == null)
+					return;
+				synchronized (ack_send) {
+					boolean ack_sent = ack_send[frame_no];
+					if (!ack_sent) {
+						synchronized (received_so_far) {
+							received_so_far++;
+						}
+						ack_send[frame_no] = true;
+						received[frame_no] = decoded_bytes;
+					}
+				}
+			}
+			// send ack!
+			ack_to_send.put(frame_no);
 		}
 	}
 
@@ -522,7 +721,7 @@ public class Node {
 	private void send_ack(int frame_no) throws IOException {
 		ByteArrayOutputStream phyPayloadStream = new ByteArrayOutputStream();
 		ByteArrayOutputStream bos = new ByteArrayOutputStream();
-		phyPayloadStream.write(get_mac_header(node_tx, node_id, true, frame_no));
+		phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_ACK, frame_no));
 		phyPayloadStream.write(ackPayload);
 		byte[] phyPayload = phyPayloadStream.toByteArray();
 		bos.write(header);
@@ -538,10 +737,12 @@ public class Node {
 		speak.write(to_send, 0, to_send.length);
 	}
 
-	private void mac() throws InterruptedException, IOException {
+	public void mac() throws InterruptedException, IOException {
 		while (!stopped) {
 			File file = files_to_send.take();
-			send_file_init(file);
+//			send_file_init(file);
+//			send_file_init_inline(file);
+			send_file_init_inline_rv(file);
 			send_file_hi();
 			synchronized (sent_so_far) {
 				sent_so_far = 0;
@@ -560,11 +761,11 @@ public class Node {
 							continue;
 						}
 					}
-					System.out.println("Send frame " + i);
-					if (wait_count == 40) {
+//					System.out.println("Send frame " + i);
+					if (wait_count >= 1) {
 						wait_count = 0;
 						System.out.println("Wait! " + i);
-						Thread.sleep(1000);
+						Thread.sleep(100);
 					}
 					send_frame(i);
 					wait_count++;
@@ -577,7 +778,7 @@ public class Node {
 	}
 
 	public static void main(String[] args) throws InterruptedException {
-		final File file_1 = new File("input.bin");
+		final File file_1 = new File("data.bin");
 		Node node = new Node();
 		node.files_to_send.put(file_1);
 		System.out.println("KAI");
