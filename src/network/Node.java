@@ -3,7 +3,6 @@ package network;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -43,20 +42,17 @@ public class Node {
 	int send_num_frames = 0;
 	int get_num_frames = 0;
 	int retry_cnt = 0;
-	Integer packet_so_far = 0;
+	Integer sent_so_far = 0;
+	Integer received_so_far = 0;
 
 	byte[][] received;
-	// byte[][] received1;
 	ArrayBlockingQueue<Integer> ack_to_send =
 			new ArrayBlockingQueue<Integer>(1024);
 	ArrayBlockingQueue<File> files_to_send =
 			new ArrayBlockingQueue<File>(1024);
 	boolean[] ack_get;
 	boolean[] ack_send = null;
-//	boolean[] safe;
 	boolean stopped = false;
-
-	byte[] received_frame;
 
 	byte[] header = new byte[2*header_size];
 	int[] header_ints = new int[header_size];
@@ -67,7 +63,8 @@ public class Node {
 	final int packet_len = (frame_size + 40) * spb;
 	SourceDataLine speak;
 	TargetDataLine mic;
-	Object syncObj = new Object();
+	Object syncHi = new Object();
+	Object syncBye = new Object();
 
 	private AudioFormat getAudioFormat() {
 		float sampleRate = 44100.f;
@@ -281,15 +278,15 @@ public class Node {
 			send_num_frames++;
 		System.out.println("File length: " + length);
 		System.out.println("Num frames: " + send_num_frames);
-		ack_get = new boolean[send_num_frames + 1];
+		ack_get = new boolean[send_num_frames + 2];
 		byte[] macPayload = new byte[frame_size / 8];
-		frame_list = new byte[send_num_frames + 1][];
+		frame_list = new byte[send_num_frames + 2][];
 
-		for (int i = 0; i <= send_num_frames; ++i) {
+		for (int i = 0; i <= send_num_frames + 1; ++i) {
 			ByteArrayOutputStream phyPayloadStream = new ByteArrayOutputStream();
 			ByteArrayOutputStream bos = new ByteArrayOutputStream();
 			phyPayloadStream.write(get_mac_header(node_tx, node_id, false, i));
-			if (i == 0) {
+			if (i == 0 || i == send_num_frames + 1) {
 				int32_to_bytes((int) file.length(), macPayload, 0);
 				str_to_bytes(file.getName(), macPayload, 4);
 			} else {
@@ -306,16 +303,30 @@ public class Node {
 		fis.close();
 	}
 
-	private void send_file_meta() throws InterruptedException {
+	private void send_file_hi() throws InterruptedException {
 		boolean ack_got = false;
 		while (!ack_got) {
 			System.out.println("Sending...");
 			send_frame(0);
-			synchronized (syncObj) {
-				syncObj.wait(2000);
+			synchronized (syncHi) {
+				syncHi.wait(2000);
 			}
 			synchronized (ack_get) {
 				ack_got = ack_get[0];
+			}
+		}
+	}
+
+	private void send_file_bye() throws InterruptedException {
+		boolean ack_got = false;
+		while (!ack_got) {
+			System.out.println("Sending...");
+			send_frame(send_num_frames + 1);
+			synchronized (syncBye) {
+				syncBye.wait(2000);
+			}
+			synchronized (ack_get) {
+				ack_got = ack_get[send_num_frames + 1];
 			}
 		}
 	}
@@ -400,35 +411,9 @@ public class Node {
 			}
 			++cur;
 		}
-		System.out.println("Packet detector writing file...");
-		synchronized (ack_send) {
-			int count = 0;
-			for (int frame_no = 0; frame_no < get_num_frames; ++frame_no) {
-				if (ack_send[frame_no])
-					count++;
-			}
-			System.out.println("Frames received: " + count);
-		}
-		synchronized (received) {
-			if (file_rx == null) {
-				return;
-			}
-			FileOutputStream fos = new FileOutputStream(file_rx);
-			for (int frame_no = 1; frame_no <= get_num_frames; frame_no++) {
-				System.out.println(frame_no);
-				if (received[frame_no] != null) {
-					fos.write(received[frame_no], 4, frame_size / 8);
-				} else {
-					// shouldn't happen if success
-					fos.write(dummy_body, 0, frame_size / 8);
-				}
-			}
-			fos.close();
-		}
-		System.out.println("Packet detector stopped!");
 	}
 
-	private void packet_ana(boolean[] decoded) throws FileNotFoundException, InterruptedException {
+	private void packet_ana(boolean[] decoded) throws InterruptedException, IOException {
 //		System.out.println("There is a packet");
 		byte decoded_bytes[] = new byte[decoded.length / 8];
 		bits_to_bytes(decoded, decoded_bytes);
@@ -457,12 +442,16 @@ public class Node {
 				if (new_ack) {
 					ack_get[frame_no] = true;
 					if (frame_no == 0) {
-						synchronized (syncObj) {
-							syncObj.notify();
+						synchronized (syncHi) {
+							syncHi.notify();
+						}
+					} else if (frame_no == send_num_frames + 1) {
+						synchronized (syncBye) {
+							syncBye.notify();
 						}
 					} else {
-						synchronized (packet_so_far) {
-							packet_so_far++;
+						synchronized (sent_so_far) {
+							sent_so_far++;
 						}
 					}
 				}
@@ -488,10 +477,37 @@ public class Node {
 					ack_send = new boolean[get_num_frames + 1];
 					ack_send[0] = true;
 				}
+			} else if (frame_no == get_num_frames + 1) {
+				if (ack_send != null) {
+					ack_send = null;
+					System.out.println("writing file...");
+					synchronized (received) {
+						if (file_rx == null) {
+							return;
+						}
+						FileOutputStream fos = new FileOutputStream(file_rx);
+						for (int no = 1; no <= get_num_frames; no++) {
+							if (received[no] != null) {
+								fos.write(received[no], 4, frame_size / 8);
+							} else {
+								// shouldn't happen if success
+								fos.write(dummy_body, 0, frame_size / 8);
+							}
+						}
+						fos.close();
+					}
+					System.out.println("file written!");
+					received = null;
+				}
 			} else {
+				if (ack_send == null)
+					return;
 				synchronized (ack_send) {
 					boolean ack_sent = ack_send[frame_no];
 					if (!ack_sent) {
+						synchronized (received_so_far) {
+							received_so_far++;
+						}
 						ack_send[frame_no] = true;
 						received[frame_no] = decoded_bytes;
 					}
@@ -526,14 +542,14 @@ public class Node {
 		while (!stopped) {
 			File file = files_to_send.take();
 			send_file_init(file);
-			send_file_meta();
-			synchronized (packet_so_far) {
-				packet_so_far = 0;
+			send_file_hi();
+			synchronized (sent_so_far) {
+				sent_so_far = 0;
 			}
 
 			while (!stopped) {
-				synchronized (packet_so_far) {
-					if (packet_so_far == send_num_frames) {
+				synchronized (sent_so_far) {
+					if (sent_so_far == send_num_frames) {
 						break;
 					}
 				}
@@ -554,6 +570,8 @@ public class Node {
 					wait_count++;
 				}
 			}
+			System.out.println("Mac sent a file. bye!");
+			send_file_bye();
 		}
 		System.out.println("Mac has done!");
 	}
