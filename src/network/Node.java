@@ -8,7 +8,9 @@ import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.concurrent.ArrayBlockingQueue;
 
 import javax.sound.sampled.AudioFormat;
@@ -19,18 +21,21 @@ import javax.sound.sampled.TargetDataLine;
 
 public class Node {
 
+	final static byte[] BADDR = {119, 75, (byte) 217, 26};
+
 	final static byte TYPE_NORMAL = (byte) 0x00;
 	final static byte TYPE_ACK = (byte) 0xff;
 	final static byte TYPE_UDP_SEND = (byte) 0x0f;
 	final static byte TYPE_UDP_RECV = (byte) 0xf0;
+	final static byte TYPE_ICMP_REQ = (byte) 0x33;
+	final static byte TYPE_ICMP_REP = (byte) 0xcc;
 	final static int CRC_POLYNOM = 0x9c;
 	final static byte CRC_INITIAL = (byte) 0x00;
 
 	final static byte NODE_ID = (byte) 0x00;
 	final static byte NODE_TX = (byte) 0x00;
-	final static int NODE_IP = 0;
 
-	final int[] large_buffer = new int[44100 * 1000];
+	final int[] large_buffer = new int[44100 * 100];
 	int cur = 0;
 
 	File file_rx = null;
@@ -38,7 +43,7 @@ public class Node {
 	File notify_rfile = new File("./tmp/natr.notify");
 
 	final static long duration = 60000;
-	final static int frame_size = 400;
+	final static int frame_size = 512;   // must be 8x
 	final static int amp = 32767;        // amplitude
 	final static float fs = 44100;       // sample rate
 	final static float fc = 11025;       // frequency of carrier
@@ -57,11 +62,18 @@ public class Node {
 	Integer received_so_far = 0;
 
 	byte[][] received;
+	byte[][] icmp_req_received = new byte[100][];
 	ArrayBlockingQueue<Integer> ack_to_send =
 			new ArrayBlockingQueue<Integer>(1024);
 	ArrayBlockingQueue<File> files_to_send =
 			new ArrayBlockingQueue<File>(1024);
+	ArrayBlockingQueue<Integer> icmp_req_to_send =
+			new ArrayBlockingQueue<Integer>(16);
+	ArrayBlockingQueue<Integer> icmp_rep_to_send =
+			new ArrayBlockingQueue<Integer>(16);
 	boolean[] ack_get;
+	boolean[] icmp_reply = new boolean[100];
+	byte[][] icmp_payload = new byte[100][];
 	boolean[] ack_send = null;
 	boolean stopped = false;
 
@@ -69,6 +81,7 @@ public class Node {
 	int[] header_ints = new int[header_size];
 	byte[] intv = new byte[200];
 	byte[][] frame_list;
+	byte[][] icmp_frame_list = new byte[100][];
 	byte[] dummy_body = new byte[frame_size / 8];
 	byte[] ackPayload = new byte[frame_size / 8];
 	final int packet_len = (frame_size + 40) * spb;
@@ -76,6 +89,7 @@ public class Node {
 	TargetDataLine mic;
 	Object syncHi = new Object();
 	Object syncBye = new Object();
+	Object sync_icmp = new Object();
 
 	private AudioFormat getAudioFormat() {
 		float sampleRate = 44100.f;
@@ -119,6 +133,59 @@ public class Node {
 			Thread.sleep(duration);
 			stopped = true;
 //			ak.join();
+			pd.join();
+			mc.join();
+
+			device_stop();
+			System.out.println("Node stopped!");
+
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+
+	public void run_icmp() {
+		try {
+
+			frame_init();
+			device_start();
+			Thread pd = new Thread(()->{
+				try {
+					packet_detect();
+				} catch (IOException | InterruptedException e) {
+					e.printStackTrace();
+				}
+			});
+			Thread mc = new Thread(()->{
+				try {
+					mac_icmp();
+				} catch (InterruptedException | IOException e) {
+					e.printStackTrace();
+				}
+			});
+			Thread sirq = new Thread(()->{
+				try {
+					send_icmp_req();
+				} catch (InterruptedException e) {
+					e.printStackTrace();
+				}
+			});
+			Thread irs = new Thread(()->{
+				try {
+					icmp_reply_sender();
+				} catch (InterruptedException | IOException e) {
+					e.printStackTrace();
+				}
+			});
+			sirq.start();
+			irs.start();
+			pd.start();
+			mc.start();
+
+			Thread.sleep(duration);
+			stopped = true;
+			sirq.join();
+			irs.join();
 			pd.join();
 			mc.join();
 
@@ -195,6 +262,12 @@ public class Node {
 			bytes[i + offset] = (byte) (it & 0xff);
 			it >>= 8;
 		}
+	}
+
+	private static void addr_to_bytes(String addr, byte[] bytes, int offset) throws UnknownHostException {
+		InetAddress ip = InetAddress.getByName(addr);
+		byte[] baddr = ip.getAddress();
+		System.arraycopy(baddr, 0, bytes, offset, 4);
 	}
 
 	private static int bytes_to_int32(byte[] bytes, int offset) {
@@ -398,6 +471,24 @@ public class Node {
 		fis.close();
 	}
 
+	private void send_icmp_init() throws IOException {
+		byte[] macPayload = new byte[frame_size / 8];
+
+		for (int i = 0; i < 100; ++i) {
+			ByteArrayOutputStream phyPayloadStream = new ByteArrayOutputStream();
+			ByteArrayOutputStream bos = new ByteArrayOutputStream();
+			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_ICMP_REQ, i));
+			System.arraycopy(BADDR, 0, macPayload, 0, 4);
+			Arrays.fill(macPayload, 4, 60, (byte) 48);
+			phyPayloadStream.write(macPayload);
+			byte[] phyPayload = phyPayloadStream.toByteArray();
+			bos.write(header);
+			write_bytes_analog(bos, phyPayload);
+			write_byte_analog(bos, get_crc(phyPayload));
+			icmp_frame_list[i] = bos.toByteArray();
+		}
+	}
+
 	private void send_file_hi() throws InterruptedException {
 		boolean ack_got = false;
 		while (!ack_got) {
@@ -451,6 +542,44 @@ public class Node {
 	public void ack_sender() throws IOException, InterruptedException {
 		while (!stopped) {
 			send_ack(ack_to_send.take());
+		}
+	}
+
+	public void icmp_reply_sender() throws IOException, InterruptedException {
+		while (!stopped) {
+			int cnt = icmp_rep_to_send.take();
+			System.out.println("This is " + cnt);
+			byte[] recv_req;
+			synchronized (icmp_req_received) {
+				recv_req = icmp_req_received[cnt];
+			}
+//			System.out.println(recv_req.length);
+			File file_req = new File("icmp_req.bin");
+			File file_rep = new File("icmp_rep.bin");
+			File file_req_notify = new File("icmp_req.bin.notify");
+			File file_rep_notify = new File("icmp_rep.bin.notify");
+			FileOutputStream fos = new FileOutputStream(file_req);
+			fos.write(recv_req, 4, 60);
+			fos.close();
+			file_req_notify.createNewFile();
+			while (!file_rep_notify.exists()) {
+				Thread.sleep(50);
+			}
+			file_rep_notify.delete();
+			FileInputStream fis = new FileInputStream(file_rep);
+			byte[] recv_rep = fis.readAllBytes();
+			fis.close();
+			ByteArrayOutputStream phyPayloadStream = new ByteArrayOutputStream();
+			ByteArrayOutputStream bos = new ByteArrayOutputStream();
+			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_ICMP_REP, cnt));
+			phyPayloadStream.write(recv_rep);
+			phyPayloadStream.write(new byte[frame_size / 8 - recv_rep.length]);
+			byte[] phyPayload = phyPayloadStream.toByteArray();
+			bos.write(header);
+			write_bytes_analog(bos, phyPayload);
+			write_byte_analog(bos, get_crc(phyPayload));
+			byte[] to_send = bos.toByteArray();
+			speak.write(to_send, 0, to_send.length);
 		}
 	}
 
@@ -714,6 +843,23 @@ public class Node {
 			}
 			// send ack!
 			ack_to_send.put(frame_no);
+		} else if (type == TYPE_ICMP_REP) {
+			synchronized (icmp_reply) {
+				boolean replied = icmp_reply[frame_no];
+				if (!replied) {
+					icmp_reply[frame_no] = true;
+					synchronized (sync_icmp) {
+						sync_icmp.notify();
+					}
+				}
+			}
+		} else if (type == TYPE_ICMP_REQ) {
+//			System.out.println("???");
+			synchronized (icmp_req_received) {
+				icmp_req_received[frame_no] = decoded_bytes;
+//				System.out.println(decoded_bytes[17]);
+			}
+			icmp_rep_to_send.put(frame_no);
 		}
 	}
 
@@ -737,12 +883,45 @@ public class Node {
 		speak.write(to_send, 0, to_send.length);
 	}
 
+	private void send_frame_icmp_req(int cnt) {
+		byte[] to_send = icmp_frame_list[cnt];
+		speak.write(to_send, 0, to_send.length);
+	}
+
+	private void send_icmp_req() throws InterruptedException {
+		while (!stopped) {
+			int i = icmp_req_to_send.take();
+			boolean replied;
+			send_frame_icmp_req(i);
+			synchronized (sync_icmp) {
+				sync_icmp.wait(1000);
+			}
+			synchronized (icmp_reply) {
+				replied = icmp_reply[i];
+			}
+			if (!replied)
+				System.out.println("Time out!");
+			else
+				System.out.println("Ping success!");
+		}
+	}
+
+	public void mac_icmp() throws InterruptedException, IOException {
+		send_icmp_init();
+		for (int i = 0; i < 10; ++i) {
+			System.out.println("ICMP echo request " + i + "...");
+			icmp_req_to_send.put(i);
+			Thread.sleep(1000);
+		}
+		System.out.println("MAC stopped!!!");
+	}
+
 	public void mac() throws InterruptedException, IOException {
 		while (!stopped) {
 			File file = files_to_send.take();
 //			send_file_init(file);
 //			send_file_init_inline(file);
-			send_file_init_inline_rv(file);
+//			send_file_init_inline_rv(file);
 			send_file_hi();
 			synchronized (sent_so_far) {
 				sent_so_far = 0;
@@ -780,9 +959,11 @@ public class Node {
 	public static void main(String[] args) throws InterruptedException {
 		final File file_1 = new File("data.bin");
 		Node node = new Node();
-		node.files_to_send.put(file_1);
-		System.out.println("KAI");
-		node.run();
+//		node.files_to_send.put(file_1);
+		System.out.println("START");
+//		node.run();
+		node.run_icmp();
+		System.out.println("END");
 	}
 
 }
