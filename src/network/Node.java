@@ -28,7 +28,7 @@ public class Node {
 	final static byte TYPE_UDP_SEND = (byte) 0x0f;
 	final static byte TYPE_UDP_RECV = (byte) 0xf0;
 	final static byte TYPE_ICMP_REQ = (byte) 0x33;
-	final static byte TYPE_ICMP_REP = (byte) 0xcc;
+	final static byte TYPE_ICMP_REP = (byte) 0x44;
 	final static int CRC_POLYNOM = 0x9c;
 	final static byte CRC_INITIAL = (byte) 0x00;
 
@@ -856,6 +856,8 @@ public class Node {
 		} else if (type == TYPE_ICMP_REQ) {
 //			System.out.println("???");
 			synchronized (icmp_req_received) {
+				if (icmp_req_received[frame_no] != null)
+					return;
 				icmp_req_received[frame_no] = decoded_bytes;
 //				System.out.println(decoded_bytes[17]);
 			}
