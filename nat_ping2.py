@@ -59,7 +59,6 @@ def main():
             continue
         print('Notice:', addr)
         data = rec_packet[28:]
-        dest_addr = socket.inet_ntoa(rec_packet[12:16])
         repack_header = struct.pack('!bbHHh', type_, code, 0, p_id, seq)
         corr_chksum = checksum(repack_header + data)
         if corr_chksum != chksum:
@@ -72,15 +71,22 @@ def main():
 
         open(FILE_REQ_NOTIFY, 'wb').close()
 
-        while not os.path.exists(FILE_REP_NOTIFY):
-            time.sleep(0.05)
+        i = 0
+        for i in range(20):
+            if not os.path.exists(FILE_REP_NOTIFY):
+                time.sleep(0.05)
+            else:
+                break
+        else:
+            print('timeout!')
+            continue
+
         os.remove(FILE_REP_NOTIFY)
 
         with open(FILE_REP, 'rb') as file_rep:
-            dest_addr_ = file_rep.read(4)
-            seq_ = file_rep.read(2)
+            dest_addr = socket.inet_ntoa(file_rep.read(4))
+            seq = int.from_bytes(file_rep.read(2), 'big')
             data = file_rep.read(56)
-            data = data[:55] + b'X'
 
         packet = create_packet(p_id, seq, data, ICMP_ECHO_REPLY)
         reply_socket.sendto(packet, (dest_addr, 0))

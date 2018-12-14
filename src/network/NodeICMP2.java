@@ -18,6 +18,11 @@ import javax.sound.sampled.TargetDataLine;
 
 public class NodeICMP2 {
 
+	final static File file_req2 = new File("icmp_req2.bin");
+	final static File file_rep2 = new File("icmp_rep2.bin");
+	final static File file_req2_notify = new File("icmp_req2.bin.notify");
+	final static File file_rep2_notify = new File("icmp_rep2.bin.notify");
+
 	final static byte[] BADDR = {119, 75, (byte) 217, 26};
 
 	final static byte TYPE_ICMP_REQ = (byte) 0x00;
@@ -28,12 +33,12 @@ public class NodeICMP2 {
 	final static byte NODE_ID = (byte) 0xff;
 	final static byte NODE_TX = (byte) 0x00;
 
-	final int[] large_buffer = new int[44100 * 100];
+	final int[] large_buffer = new int[44100 * 600];
 	int cur = 0;
 
 	File file_rx = null;
 
-	final static long duration = 60000;
+	final static long duration = 600000;
 	final static int frame_size = 512;   // must be 8x
 	final static int amp = 32767;        // amplitude
 	final static float fs = 44100;       // sample rate
@@ -52,8 +57,8 @@ public class NodeICMP2 {
 	Integer sent_so_far = 0;
 	Integer received_so_far = 0;
 
-	byte[][] icmp_req_received = new byte[256][];
-	byte[][] icmp_rep_received = new byte[256][];
+	byte[][] icmp_req_received = new byte[65536][];
+	byte[][] icmp_rep_received = new byte[65536][];
 	ArrayBlockingQueue<Integer> icmp_rep_to_int =
 			new ArrayBlockingQueue<Integer>(16);
 	ArrayBlockingQueue<Integer> icmp_rep_to_send =
@@ -229,12 +234,9 @@ public class NodeICMP2 {
 		return it;
 	}
 
-	private static int bytes_to_int16(byte[] bytes, int offset) {
+	private static int bytes_to_int16_be(byte[] bytes, int offset) {
 		int it = 0;
-		for (int i = 0; i < 2; ++i) {
-			it |= (bytes[i + offset] & 0xff) << (8 * i);
-		}
-		return it;
+		return ((bytes[offset] & 0xff) << 8) | (bytes[offset + 1] & 0xff);
 	}
 
 	private static void str_to_bytes(String str, byte[] bytes, int offset) {
@@ -342,21 +344,17 @@ public class NodeICMP2 {
 	}
 
 	public void icmp_reply_to_internet() throws InterruptedException, IOException {
-		File file_req = new File("icmp_req2.bin");
-		File file_rep = new File("icmp_rep2.bin");
-		File file_req_notify = new File("icmp_req2.bin.notify");
-		File file_rep_notify = new File("icmp_rep2.bin.notify");
 
 		while (!stopped) {
-			int cnt = icmp_rep_to_int.take();
+			int seq = icmp_rep_to_int.take();
 			byte[] recv_rep;
 			synchronized (icmp_rep_received) {
-				recv_rep = icmp_rep_received[cnt];
+				recv_rep = icmp_rep_received[seq];
 			}
-			FileOutputStream fos = new FileOutputStream(file_rep);
+			FileOutputStream fos = new FileOutputStream(file_rep2);
 			fos.write(Arrays.copyOfRange(recv_rep, 4, 66));
 			fos.close();
-			file_rep_notify.createNewFile();
+			file_rep2_notify.createNewFile();
 		}
 	}
 
@@ -402,24 +400,20 @@ public class NodeICMP2 {
 	}
 
 	public void icmp_request_receiver() throws InterruptedException, IOException {
-		File file_req = new File("icmp_req2.bin");
-		File file_rep = new File("icmp_rep2.bin");
-		File file_req_notify = new File("icmp_req2.bin.notify");
-		File file_rep_notify = new File("icmp_rep2.bin.notify");
 
 		while (!stopped) {
-			while (!file_req_notify.exists()) {
+			while (!file_req2_notify.exists()) {
 				Thread.sleep(50);
 			}
-			file_req_notify.delete();
+			file_req2_notify.delete();
 			System.out.println("Recv");
-			FileInputStream fis = new FileInputStream(file_req);
+			FileInputStream fis = new FileInputStream(file_req2);
 			byte[] recv_req = fis.readAllBytes();
-			int cnt = recv_req[6];
+//			int cnt = bytes_to_int16_be(recv_req, 4);
 			fis.close();
 			ByteArrayOutputStream phyPayloadStream = new ByteArrayOutputStream();
 			ByteArrayOutputStream bos = new ByteArrayOutputStream();
-			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_ICMP_REQ, cnt));
+			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_ICMP_REQ, 0));
 			phyPayloadStream.write(recv_req);
 			phyPayloadStream.write(new byte[frame_size / 8 - recv_req.length]);
 			byte[] phyPayload = phyPayloadStream.toByteArray();
@@ -504,12 +498,13 @@ public class NodeICMP2 {
 		byte type = bit8_to_byte(decoded, 16);
 		int frame_no = bit8_to_byte(decoded, 24) & 0xff;
 		if (type == TYPE_ICMP_REP) {
+			int seq = bytes_to_int16_be(decoded_bytes, 8);
 			synchronized (icmp_rep_received) {
-				if (icmp_rep_received[frame_no] != null)
+				if (icmp_rep_received[seq] != null)
 					return;
-				icmp_rep_received[frame_no] = decoded_bytes;
+				icmp_rep_received[seq] = decoded_bytes;
 			}
-			icmp_rep_to_int.put(frame_no);
+			icmp_rep_to_int.put(seq);
 		} else if (type == TYPE_ICMP_REQ) {
 			synchronized (icmp_req_received) {
 				if (icmp_req_received[frame_no] != null)

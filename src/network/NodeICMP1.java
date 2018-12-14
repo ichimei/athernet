@@ -26,12 +26,12 @@ public class NodeICMP1 {
 	final static byte NODE_ID = (byte) 0x00;
 	final static byte NODE_TX = (byte) 0xff;
 
-	final int[] large_buffer = new int[44100 * 100];
+	final int[] large_buffer = new int[44100 * 600];
 	int cur = 0;
 
 	File file_rx = null;
 
-	final static long duration = 60000;
+	final static long duration = 600000;
 	final static int frame_size = 512;   // must be 8x
 	final static int amp = 32767;        // amplitude
 	final static float fs = 44100;       // sample rate
@@ -50,8 +50,8 @@ public class NodeICMP1 {
 	Integer sent_so_far = 0;
 	Integer received_so_far = 0;
 
-	byte[][] icmp_req_received = new byte[256][];
-	byte[][] icmp_rep_received = new byte[256][];
+	byte[][] icmp_req_received = new byte[65536][];
+	byte[][] icmp_rep_received = new byte[65536][];
 	ArrayBlockingQueue<Integer> icmp_req_to_send =
 			new ArrayBlockingQueue<Integer>(16);
 	ArrayBlockingQueue<Integer> icmp_rep_to_send =
@@ -228,43 +228,10 @@ public class NodeICMP1 {
 		return it;
 	}
 
-	private static int bytes_to_int16(byte[] bytes, int offset) {
+	private static int bytes_to_int16_be(byte[] bytes, int offset) {
 		int it = 0;
-		for (int i = 0; i < 2; ++i) {
-			it |= (bytes[i + offset] & 0xff) << (8 * i);
-		}
-		return it;
+		return ((bytes[offset] & 0xff) << 8) | (bytes[offset + 1] & 0xff);
 	}
-
-	private static void str_to_bytes(String str, byte[] bytes, int offset) {
-		byte[] str_bytes = str.getBytes();
-		int str_len = str.length();
-		System.arraycopy(str_bytes, 0, bytes, offset, str_len);
-		bytes[offset + str_len] = 0;
-	}
-
-	private static String bytes_to_str(byte[] bytes, int offset) {
-		String s = new String();
-		for (int i = 0;; ++i) {
-			byte b = bytes[offset + i];
-			if (b != 0) {
-				s += (char) b;
-			} else {
-				break;
-			}
-		}
-		return s;
-	}
-
-//	private int[] bits_to_ints(boolean[] bits) {
-//		int[] ints = new int[spb*bits.length];
-//		for (int j = 0; j < bits.length; ++j) {
-//			for (int k = 0; k < spb; ++k) {
-//				ints[j*spb+k] = (int) (amp * Math.sin(2 * Math.PI * fc * k / fs) * (bits[j] ? 1 : -1));
-//			}
-//		}
-//		return ints;
-//	}
 
 	private static void write_bits_analog(ByteArrayOutputStream bos, boolean[] bits) {
 		for (int j = 0; j < bits.length; ++j) {
@@ -448,25 +415,26 @@ public class NodeICMP1 {
 				}
 			}
 		} else if (type == TYPE_ICMP_REQ) {
+			int seq = bytes_to_int16_be(decoded_bytes, 8);
 			synchronized (icmp_req_received) {
-				if (icmp_req_received[frame_no] != null)
+				if (icmp_req_received[seq] != null)
 					return;
-				icmp_req_received[frame_no] = decoded_bytes;
+				icmp_req_received[seq] = decoded_bytes;
 			}
-			icmp_rep_to_send.put(frame_no);
+			icmp_rep_to_send.put(seq);
 		}
 	}
 
 	public void icmp_reply_sender() throws IOException, InterruptedException {
 		while (!stopped) {
-			int cnt = icmp_rep_to_send.take();
+			int seq = icmp_rep_to_send.take();
 			byte[] recv_req;
 			synchronized (icmp_req_received) {
-				recv_req = icmp_req_received[cnt];
+				recv_req = icmp_req_received[seq];
 			}
 			ByteArrayOutputStream phyPayloadStream = new ByteArrayOutputStream();
 			ByteArrayOutputStream bos = new ByteArrayOutputStream();
-			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_ICMP_REP, cnt));
+			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_ICMP_REP, 0));
 			phyPayloadStream.write(Arrays.copyOfRange(recv_req, 4, 68));
 			byte[] phyPayload = phyPayloadStream.toByteArray();
 			bos.write(header);
