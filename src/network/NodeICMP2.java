@@ -52,9 +52,9 @@ public class NodeICMP2 {
 	Integer sent_so_far = 0;
 	Integer received_so_far = 0;
 
-	byte[][] icmp_req_received = new byte[100][];
-	byte[][] icmp_rep_received = new byte[100][];
-	ArrayBlockingQueue<Integer> icmp_req_to_send =
+	byte[][] icmp_req_received = new byte[256][];
+	byte[][] icmp_rep_received = new byte[256][];
+	ArrayBlockingQueue<Integer> icmp_rep_to_int =
 			new ArrayBlockingQueue<Integer>(16);
 	ArrayBlockingQueue<Integer> icmp_rep_to_send =
 			new ArrayBlockingQueue<Integer>(16);
@@ -101,11 +101,29 @@ public class NodeICMP2 {
 					e.printStackTrace();
 				}
 			});
+			Thread irr = new Thread(()->{
+				try {
+					icmp_request_receiver();
+				} catch (InterruptedException | IOException e) {
+					e.printStackTrace();
+				}
+			});
+			Thread irti = new Thread(()->{
+				try {
+					icmp_reply_to_internet();
+				} catch (InterruptedException | IOException e) {
+					e.printStackTrace();
+				}
+			});
+			irr.start();
+			irti.start();
 			irs.start();
 			pd.start();
 
 			Thread.sleep(duration);
 			stopped = true;
+			irr.join();
+			irti.join();
 			irs.join();
 			pd.join();
 
@@ -323,7 +341,31 @@ public class NodeICMP2 {
 			ints[i + offset] = (data[2*i+1] << 8) | (data[2*i] & 0xff);
 	}
 
+	public void icmp_reply_to_internet() throws InterruptedException, IOException {
+		File file_req = new File("icmp_req2.bin");
+		File file_rep = new File("icmp_rep2.bin");
+		File file_req_notify = new File("icmp_req2.bin.notify");
+		File file_rep_notify = new File("icmp_rep2.bin.notify");
+
+		while (!stopped) {
+			int cnt = icmp_rep_to_int.take();
+			byte[] recv_rep;
+			synchronized (icmp_rep_received) {
+				recv_rep = icmp_rep_received[cnt];
+			}
+			FileOutputStream fos = new FileOutputStream(file_rep);
+			fos.write(Arrays.copyOfRange(recv_rep, 4, 66));
+			fos.close();
+			file_rep_notify.createNewFile();
+		}
+	}
+
 	public void icmp_reply_sender() throws IOException, InterruptedException {
+		File file_req = new File("icmp_req.bin");
+		File file_rep = new File("icmp_rep.bin");
+		File file_req_notify = new File("icmp_req.bin.notify");
+		File file_rep_notify = new File("icmp_rep.bin.notify");
+
 		while (!stopped) {
 			int cnt = icmp_rep_to_send.take();
 			System.out.println("This is " + cnt);
@@ -332,10 +374,6 @@ public class NodeICMP2 {
 				recv_req = icmp_req_received[cnt];
 			}
 //			System.out.println(recv_req.length);
-			File file_req = new File("icmp_req.bin");
-			File file_rep = new File("icmp_rep.bin");
-			File file_req_notify = new File("icmp_req.bin.notify");
-			File file_rep_notify = new File("icmp_rep.bin.notify");
 			FileOutputStream fos = new FileOutputStream(file_req);
 			fos.write(recv_req, 4, 62);
 			fos.close();
@@ -354,6 +392,36 @@ public class NodeICMP2 {
 			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_ICMP_REP, cnt));
 			phyPayloadStream.write(recv_rep);
 			phyPayloadStream.write(new byte[frame_size / 8 - recv_rep.length]);
+			byte[] phyPayload = phyPayloadStream.toByteArray();
+			bos.write(header);
+			write_bytes_analog(bos, phyPayload);
+			write_byte_analog(bos, get_crc(phyPayload));
+			byte[] to_send = bos.toByteArray();
+			speak.write(to_send, 0, to_send.length);
+		}
+	}
+
+	public void icmp_request_receiver() throws InterruptedException, IOException {
+		File file_req = new File("icmp_req2.bin");
+		File file_rep = new File("icmp_rep2.bin");
+		File file_req_notify = new File("icmp_req2.bin.notify");
+		File file_rep_notify = new File("icmp_rep2.bin.notify");
+
+		while (!stopped) {
+			while (!file_req_notify.exists()) {
+				Thread.sleep(50);
+			}
+			file_req_notify.delete();
+			System.out.println("Recv");
+			FileInputStream fis = new FileInputStream(file_req);
+			byte[] recv_req = fis.readAllBytes();
+			int cnt = recv_req[6];
+			fis.close();
+			ByteArrayOutputStream phyPayloadStream = new ByteArrayOutputStream();
+			ByteArrayOutputStream bos = new ByteArrayOutputStream();
+			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_ICMP_REQ, cnt));
+			phyPayloadStream.write(recv_req);
+			phyPayloadStream.write(new byte[frame_size / 8 - recv_req.length]);
 			byte[] phyPayload = phyPayloadStream.toByteArray();
 			bos.write(header);
 			write_bytes_analog(bos, phyPayload);
@@ -436,7 +504,12 @@ public class NodeICMP2 {
 		byte type = bit8_to_byte(decoded, 16);
 		int frame_no = bit8_to_byte(decoded, 24) & 0xff;
 		if (type == TYPE_ICMP_REP) {
-			// shouldn't happen
+			synchronized (icmp_rep_received) {
+				if (icmp_rep_received[frame_no] != null)
+					return;
+				icmp_rep_received[frame_no] = decoded_bytes;
+			}
+			icmp_rep_to_int.put(frame_no);
 		} else if (type == TYPE_ICMP_REQ) {
 			synchronized (icmp_req_received) {
 				if (icmp_req_received[frame_no] != null)

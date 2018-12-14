@@ -109,20 +109,22 @@ def main():
             time.sleep(0.05)
         os.remove(FILE_REQ_NOTIFY)
 
-        with open(FILE_REQ, 'rb') as file_req, open(FILE_REP, 'wb') as file_rep:
+        with open(FILE_REQ, 'rb') as file_req:
             dest_addr = file_req.read(4)
             seq = file_req.read(2)
             data = file_req.read(56)
-            seq_int = int.from_bytes(seq, 'big')
-            ip_str = socket.inet_ntoa(dest_addr)
-            print('ping {}...'.format(ip_str))
-            result = do_one(ip_str, packet_id, seq_int, data, timeout)
-            if result is None:
-                print('failed. (Timeout within {} seconds.)'.format(timeout))
-            else:
-                data, delay = result
-                delay = round(delay * 1000.0, 4)
-                print('get ping in {} milliseconds.'.format(delay))
+
+        seq_int = int.from_bytes(seq, 'big')
+        ip_str = socket.inet_ntoa(dest_addr)
+        print('ping {}...'.format(ip_str))
+        result = do_one(ip_str, packet_id, seq_int, data, timeout)
+        if result is None:
+            print('failed. (Timeout within {} seconds.)'.format(timeout))
+        else:
+            data, delay = result
+            delay = round(delay * 1000.0, 4)
+            print('get ping in {} milliseconds.'.format(delay))
+            with open(FILE_REP, 'wb') as file_rep:
                 file_rep.write(dest_addr)
                 file_rep.write(seq)
                 file_rep.write(data)

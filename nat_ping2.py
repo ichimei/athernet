@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 
-import time, socket, struct, select, random
+import time, socket, struct, select, random, os
 
 # From /usr/include/linux/icmp.h; your milage may vary.
 ICMP_ECHO_REQUEST = 8 # Seems to be the same on Solaris.
 ICMP_ECHO_REPLY = 0
+
+FILE_REQ = 'icmp_req2.bin'
+FILE_REP = 'icmp_rep2.bin'
+FILE_REQ_NOTIFY = 'icmp_req2.bin.notify'
+FILE_REP_NOTIFY = 'icmp_rep2.bin.notify'
 
 def checksum(source_string):
     # I'm not too confident that this is right but testing seems to
@@ -59,6 +64,24 @@ def main():
         corr_chksum = checksum(repack_header + data)
         if corr_chksum != chksum:
             continue
+
+        with open(FILE_REQ, 'wb') as file_req:
+            file_req.write(rec_packet[12:16])
+            file_req.write(seq.to_bytes(2, 'big'))
+            file_req.write(data)
+
+        open(FILE_REQ_NOTIFY, 'wb').close()
+
+        while not os.path.exists(FILE_REP_NOTIFY):
+            time.sleep(0.05)
+        os.remove(FILE_REP_NOTIFY)
+
+        with open(FILE_REP, 'rb') as file_rep:
+            dest_addr_ = file_rep.read(4)
+            seq_ = file_rep.read(2)
+            data = file_rep.read(56)
+            data = data[:55] + b'X'
+
         packet = create_packet(p_id, seq, data, ICMP_ECHO_REPLY)
         reply_socket.sendto(packet, (dest_addr, 0))
 

@@ -88,11 +88,13 @@ def receive_ping(my_socket, packet_id, time_sent, timeout):
             '!bbHHh', icmp_header)
         repack_header = struct.pack('!bbHHh', type_, code, 0, p_id, seq)
         corr_chksum = checksum(repack_header + data)
-        if corr_chksum == chksum:
+
+        if p_id != packet_id or corr_chksum != chksum:
+            time_left -= time_received - time_sent
+            if time_left <= 0:
+                return
+        else:
             return time_received - time_sent
-        time_left -= time_received - time_sent
-        if time_left <= 0:
-            return
 
 def verbose_ping(dest_addr, timeout=1, count=4):
     """
@@ -117,4 +119,4 @@ def verbose_ping(dest_addr, timeout=1, count=4):
     print()
 
 if __name__ == '__main__':
-    verbose_ping('119.75.217.26')
+    verbose_ping('www.google.com')

@@ -50,8 +50,8 @@ public class NodeICMP1 {
 	Integer sent_so_far = 0;
 	Integer received_so_far = 0;
 
-	byte[][] icmp_req_received = new byte[100][];
-	byte[][] icmp_rep_received = new byte[100][];
+	byte[][] icmp_req_received = new byte[256][];
+	byte[][] icmp_rep_received = new byte[256][];
 	ArrayBlockingQueue<Integer> icmp_req_to_send =
 			new ArrayBlockingQueue<Integer>(16);
 	ArrayBlockingQueue<Integer> icmp_rep_to_send =
@@ -85,6 +85,14 @@ public class NodeICMP1 {
 
 			frame_init();
 			device_start();
+			Thread irs = new Thread(()->{
+				try {
+					icmp_reply_sender();
+				} catch (IOException | InterruptedException e) {
+					e.printStackTrace();
+				}
+			});
+
 			Thread pd = new Thread(()->{
 				try {
 					packet_detect();
@@ -92,13 +100,13 @@ public class NodeICMP1 {
 					e.printStackTrace();
 				}
 			});
-			Thread mc = new Thread(()->{
-				try {
-					mac_icmp();
-				} catch (InterruptedException | IOException e) {
-					e.printStackTrace();
-				}
-			});
+//			Thread mc = new Thread(()->{
+//				try {
+//					mac_icmp();
+//				} catch (InterruptedException | IOException e) {
+//					e.printStackTrace();
+//				}
+//			});
 			Thread sirq = new Thread(()->{
 				try {
 					send_icmp_req();
@@ -106,15 +114,17 @@ public class NodeICMP1 {
 					e.printStackTrace();
 				}
 			});
+			irs.start();
 			sirq.start();
 			pd.start();
-			mc.start();
+//			mc.start();
 
 			Thread.sleep(duration);
 			stopped = true;
+			irs.join();
 			sirq.join();
 			pd.join();
-			mc.join();
+//			mc.join();
 
 			device_stop();
 			System.out.println("Node stopped!");
@@ -438,13 +448,32 @@ public class NodeICMP1 {
 				}
 			}
 		} else if (type == TYPE_ICMP_REQ) {
-			// shouldn't happen
-//			synchronized (icmp_req_received) {
-//				if (icmp_req_received[frame_no] != null)
-//					return;
-//				icmp_req_received[frame_no] = decoded_bytes;
-//			}
-//			icmp_rep_to_send.put(frame_no);
+			synchronized (icmp_req_received) {
+				if (icmp_req_received[frame_no] != null)
+					return;
+				icmp_req_received[frame_no] = decoded_bytes;
+			}
+			icmp_rep_to_send.put(frame_no);
+		}
+	}
+
+	public void icmp_reply_sender() throws IOException, InterruptedException {
+		while (!stopped) {
+			int cnt = icmp_rep_to_send.take();
+			byte[] recv_req;
+			synchronized (icmp_req_received) {
+				recv_req = icmp_req_received[cnt];
+			}
+			ByteArrayOutputStream phyPayloadStream = new ByteArrayOutputStream();
+			ByteArrayOutputStream bos = new ByteArrayOutputStream();
+			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_ICMP_REP, cnt));
+			phyPayloadStream.write(Arrays.copyOfRange(recv_req, 4, 68));
+			byte[] phyPayload = phyPayloadStream.toByteArray();
+			bos.write(header);
+			write_bytes_analog(bos, phyPayload);
+			write_byte_analog(bos, get_crc(phyPayload));
+			byte[] to_send = bos.toByteArray();
+			speak.write(to_send, 0, to_send.length);
 		}
 	}
 
