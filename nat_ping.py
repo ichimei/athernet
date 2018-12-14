@@ -108,10 +108,7 @@ def main():
     while True:
         while not os.path.exists(FILE_REQ_NOTIFY):
             time.sleep(0.05)
-
         os.remove(FILE_REQ_NOTIFY)
-        print("Packet")
-        # shutil.copyfile(FILE_REQ, FILE_REP)
 
         with open(FILE_REQ, 'rb') as file_req, open(FILE_REP, 'wb') as file_rep:
             dest_addr = file_req.read(4)
