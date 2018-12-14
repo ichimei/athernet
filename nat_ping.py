@@ -9,7 +9,6 @@ FILE_REP_NOTIFY = 'icmp_rep.bin.notify'
 
 # From /usr/include/linux/icmp.h; your milage may vary.
 ICMP_ECHO_REQUEST = 8 # Seems to be the same on Solaris.
-PAYLOAD = b'E' * 56
 
 ICMP_CODE = socket.getprotobyname('icmp')
 ERROR_DESCR = {
@@ -61,7 +60,7 @@ def do_one(dest_addr, packet_id, seq, data, timeout=1):
 
     """
     try:
-        my_socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, ICMP_CODE)
+        my_socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
     except socket.error as e:
         if e.errno in ERROR_DESCR:
             # Operation not permitted

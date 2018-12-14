@@ -6,7 +6,6 @@ import time, socket, struct, select, random
 ICMP_ECHO_REQUEST = 8 # Seems to be the same on Solaris.
 PAYLOAD = b'E' * 56
 
-ICMP_CODE = socket.getprotobyname('icmp')
 ERROR_DESCR = {
     1: ' - Note that ICMP messages can only be '
        'sent from processes running as root.',
@@ -56,7 +55,7 @@ def do_one(dest_addr, packet_id, seq, data, timeout=1):
 
     """
     try:
-        my_socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, ICMP_CODE)
+        my_socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
     except socket.error as e:
         if e.errno in ERROR_DESCR:
             # Operation not permitted
@@ -88,8 +87,8 @@ def receive_ping(my_socket, packet_id, time_sent, timeout):
         type_, code, chksum, p_id, seq = struct.unpack(
             '!bbHHh', icmp_header)
         repack_header = struct.pack('!bbHHh', type_, code, 0, p_id, seq)
-        new_chksum = checksum(repack_header + data)
-        if new_chksum == chksum:
+        corr_chksum = checksum(repack_header + data)
+        if corr_chksum == chksum:
             return time_received - time_sent
         time_left -= time_received - time_sent
         if time_left <= 0:
