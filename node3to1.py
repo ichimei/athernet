@@ -1,12 +1,10 @@
 import socket, time, os
 
-UDP_IP = '127.0.0.1'
-UDP_PORT = 5005
+UDP_IP = '10.20.193.12'
+UDP_PORT = 2333
 END_MSG = b'\x12\x34\x56'
 
-TXT_FILE = './input.txt'
-
-assert os.path.isfile(TXT_FILE)
+TXT_FILE = 'input.txt'
 
 sock = socket.socket(type=socket.SOCK_DGRAM)
 

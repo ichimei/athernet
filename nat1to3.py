@@ -3,13 +3,11 @@ import socket, time, os
 UDP_IP = '10.15.28.160'
 UDP_PORT = 2333
 
-NOTIFY_FILE = './tmp/nat.notify'
-TXT_FILE = './input.txt.out'
+NOTIFY_FILE = 'udp.notify'
+TXT_FILE = 'input.txt.out'
 
 while not os.path.exists(NOTIFY_FILE):
     time.sleep(0.1)
-
-assert os.path.isfile(TXT_FILE)
 
 sock = socket.socket(type=socket.SOCK_DGRAM)
 

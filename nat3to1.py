@@ -1,13 +1,13 @@
 import socket
 
-UDP_IP = '10.20.192.173'
-UDP_PORT = 5005
+UDP_IP = '0.0.0.0'
+UDP_PORT = 2333
 END_MSG = b'\x12\x34\x56'
 
-DATA_FILE = './data.bin'
-FRAME_BYTES = 50
+DATA_FILE = 'input.txt.bin'
+FRAME_BYTES = 64
 
-NOTIFY_FILE = './tmp/natr.notify'
+NOTIFY_FILE = 'udpr.notify'
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind((UDP_IP, UDP_PORT))

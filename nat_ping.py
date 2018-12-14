@@ -94,11 +94,12 @@ def receive_ping(my_socket, packet_id, time_sent, timeout):
         repack_header = struct.pack('!bbHHh', type_, code, 0, p_id, seq)
         new_chksum = checksum(repack_header + data)
         delay = time_received - time_sent
-        if new_chksum == chksum:
+        if p_id != packet_id or new_chksum != chksum:
+            time_left -= delay
+            if time_left <= 0:
+                return
+        else:
             return data, delay
-        time_left -= delay
-        if time_left <= 0:
-            return
 
 def main():
     packet_id = random.randrange(0x10000)
