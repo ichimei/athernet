@@ -67,8 +67,6 @@ public class NodeICMP1 {
 	final int packet_len = (frame_size + 40) * spb;
 	SourceDataLine speak;
 	TargetDataLine mic;
-	Object syncHi = new Object();
-	Object syncBye = new Object();
 	Object sync_icmp = new Object();
 
 	private AudioFormat getAudioFormat() {
@@ -100,13 +98,13 @@ public class NodeICMP1 {
 					e.printStackTrace();
 				}
 			});
-//			Thread mc = new Thread(()->{
-//				try {
-//					mac_icmp();
-//				} catch (InterruptedException | IOException e) {
-//					e.printStackTrace();
-//				}
-//			});
+			Thread mc = new Thread(()->{
+				try {
+					mac_icmp();
+				} catch (InterruptedException | IOException e) {
+					e.printStackTrace();
+				}
+			});
 			Thread sirq = new Thread(()->{
 				try {
 					send_icmp_req();
@@ -117,14 +115,14 @@ public class NodeICMP1 {
 			irs.start();
 			sirq.start();
 			pd.start();
-//			mc.start();
+			mc.start();
 
 			Thread.sleep(duration);
 			stopped = true;
 			irs.join();
 			sirq.join();
 			pd.join();
-//			mc.join();
+			mc.join();
 
 			device_stop();
 			System.out.println("Node stopped!");
@@ -202,11 +200,9 @@ public class NodeICMP1 {
 		}
 	}
 
-	private static void int16_to_bytes(int it, byte[] bytes, int offset) {
-		for (int i = 0; i < 2; ++i) {
-			bytes[i + offset] = (byte) (it & 0xff);
-			it >>= 8;
-		}
+	private static void int16_to_bytes_be(int it, byte[] bytes, int offset) {
+		bytes[offset] = (byte) (it >> 8);
+		bytes[offset + 1] = (byte) (it & 0xff);
 	}
 
 	private static void addr_to_bytes(String addr, byte[] bytes, int offset) throws UnknownHostException {
@@ -291,10 +287,9 @@ public class NodeICMP1 {
 		for (int i = 0; i < 100; ++i) {
 			ByteArrayOutputStream phyPayloadStream = new ByteArrayOutputStream();
 			ByteArrayOutputStream bos = new ByteArrayOutputStream();
-			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_ICMP_REQ, i));
+			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_ICMP_REQ, 0));
 			System.arraycopy(BADDR, 0, macPayload, 0, 4);
-			macPayload[4] = 0;
-			macPayload[5] = (byte) i;
+			int16_to_bytes_be(i, macPayload, 4);
 			Arrays.fill(macPayload, 6, 62, (byte) 48);
 			phyPayloadStream.write(macPayload);
 			byte[] phyPayload = phyPayloadStream.toByteArray();
@@ -400,14 +395,15 @@ public class NodeICMP1 {
 		byte type = bit8_to_byte(decoded, 16);
 		int frame_no = bit8_to_byte(decoded, 24) & 0xff;
 		if (type == TYPE_ICMP_REP) {
+			int seq = bytes_to_int16_be(decoded_bytes, 8);
 			synchronized (icmp_reply) {
-				boolean replied = icmp_reply[frame_no];
+				boolean replied = icmp_reply[seq];
 				if (!replied) {
-					icmp_reply[frame_no] = true;
+					icmp_reply[seq] = true;
 					synchronized (icmp_rep_received) {
-						if (icmp_rep_received[frame_no] != null)
+						if (icmp_rep_received[seq] != null)
 							return;
-						icmp_rep_received[frame_no] = decoded_bytes;
+						icmp_rep_received[seq] = decoded_bytes;
 					}
 					synchronized (sync_icmp) {
 						sync_icmp.notify();
@@ -445,32 +441,36 @@ public class NodeICMP1 {
 		}
 	}
 
-	private void send_frame_icmp_req(int cnt) {
-		byte[] to_send = icmp_frame_list[cnt];
+	private void send_frame_icmp_req(int seq) {
+		byte[] to_send = icmp_frame_list[seq];
 		speak.write(to_send, 0, to_send.length);
 	}
 
 	private void send_icmp_req() throws InterruptedException, UnknownHostException {
 		while (!stopped) {
-			int i = icmp_req_to_send.take();
+			int seq = icmp_req_to_send.take();
 			boolean replied;
-			send_frame_icmp_req(i);
+			send_frame_icmp_req(seq);
+			long start = System.currentTimeMillis();
 			synchronized (sync_icmp) {
 				sync_icmp.wait(1000);
 			}
+			long end = System.currentTimeMillis();
 			synchronized (icmp_reply) {
-				replied = icmp_reply[i];
+				replied = icmp_reply[seq];
 			}
 			if (!replied)
 				System.out.println("Time out!");
 			else {
 				byte[] received;
 				synchronized (icmp_rep_received) {
-					received = icmp_rep_received[i];
+					received = icmp_rep_received[seq];
 				}
 				String ip_addr = bytes_to_addr(received, 4);
-				System.out.println("Ping success! IP: " + ip_addr);
+				System.out.println("Ping success!");
+				System.out.println("IP: " + ip_addr);
 				System.out.println("Payload: " + bytes_to_hex(received, 10, 56));
+				System.out.println("Latency: " + (end - start) + " ms");
 			}
 		}
 	}

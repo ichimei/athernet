@@ -18,6 +18,10 @@ import javax.sound.sampled.TargetDataLine;
 
 public class NodeICMP2 {
 
+	final static File file_req = new File("icmp_req.bin");
+	final static File file_rep = new File("icmp_rep.bin");
+	final static File file_req_notify = new File("icmp_req.bin.notify");
+	final static File file_rep_notify = new File("icmp_rep.bin.notify");
 	final static File file_req2 = new File("icmp_req2.bin");
 	final static File file_rep2 = new File("icmp_rep2.bin");
 	final static File file_req2_notify = new File("icmp_req2.bin.notify");
@@ -74,8 +78,6 @@ public class NodeICMP2 {
 	final int packet_len = (frame_size + 40) * spb;
 	SourceDataLine speak;
 	TargetDataLine mic;
-	Object syncHi = new Object();
-	Object syncBye = new Object();
 	Object sync_icmp = new Object();
 
 	private AudioFormat getAudioFormat() {
@@ -359,17 +361,13 @@ public class NodeICMP2 {
 	}
 
 	public void icmp_reply_sender() throws IOException, InterruptedException {
-		File file_req = new File("icmp_req.bin");
-		File file_rep = new File("icmp_rep.bin");
-		File file_req_notify = new File("icmp_req.bin.notify");
-		File file_rep_notify = new File("icmp_rep.bin.notify");
 
 		while (!stopped) {
-			int cnt = icmp_rep_to_send.take();
-			System.out.println("This is " + cnt);
+			int seq = icmp_rep_to_send.take();
+			System.out.println("This is " + seq);
 			byte[] recv_req;
 			synchronized (icmp_req_received) {
-				recv_req = icmp_req_received[cnt];
+				recv_req = icmp_req_received[seq];
 			}
 //			System.out.println(recv_req.length);
 			FileOutputStream fos = new FileOutputStream(file_req);
@@ -387,7 +385,7 @@ public class NodeICMP2 {
 				continue;
 			ByteArrayOutputStream phyPayloadStream = new ByteArrayOutputStream();
 			ByteArrayOutputStream bos = new ByteArrayOutputStream();
-			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_ICMP_REP, cnt));
+			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_ICMP_REP, 0));
 			phyPayloadStream.write(recv_rep);
 			phyPayloadStream.write(new byte[frame_size / 8 - recv_rep.length]);
 			byte[] phyPayload = phyPayloadStream.toByteArray();
@@ -406,10 +404,9 @@ public class NodeICMP2 {
 				Thread.sleep(50);
 			}
 			file_req2_notify.delete();
-			System.out.println("Recv");
 			FileInputStream fis = new FileInputStream(file_req2);
 			byte[] recv_req = fis.readAllBytes();
-//			int cnt = bytes_to_int16_be(recv_req, 4);
+//			int seq = bytes_to_int16_be(recv_req, 4);
 			fis.close();
 			ByteArrayOutputStream phyPayloadStream = new ByteArrayOutputStream();
 			ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -506,12 +503,13 @@ public class NodeICMP2 {
 			}
 			icmp_rep_to_int.put(seq);
 		} else if (type == TYPE_ICMP_REQ) {
+			int seq = bytes_to_int16_be(decoded_bytes, 8);
 			synchronized (icmp_req_received) {
-				if (icmp_req_received[frame_no] != null)
+				if (icmp_req_received[seq] != null)
 					return;
-				icmp_req_received[frame_no] = decoded_bytes;
+				icmp_req_received[seq] = decoded_bytes;
 			}
-			icmp_rep_to_send.put(frame_no);
+			icmp_rep_to_send.put(seq);
 		}
 	}
 
