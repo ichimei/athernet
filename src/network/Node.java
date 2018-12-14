@@ -63,6 +63,7 @@ public class Node {
 
 	byte[][] received;
 	byte[][] icmp_req_received = new byte[100][];
+	byte[][] icmp_rep_received = new byte[100][];
 	ArrayBlockingQueue<Integer> ack_to_send =
 			new ArrayBlockingQueue<Integer>(1024);
 	ArrayBlockingQueue<File> files_to_send =
@@ -166,7 +167,7 @@ public class Node {
 			Thread sirq = new Thread(()->{
 				try {
 					send_icmp_req();
-				} catch (InterruptedException e) {
+				} catch (InterruptedException | UnknownHostException e) {
 					e.printStackTrace();
 				}
 			});
@@ -206,6 +207,14 @@ public class Node {
 //			}
 //		}
 //	}
+
+	public static String bytes_to_hex(byte[] bytes, int offset, int length) {
+	    final StringBuilder builder = new StringBuilder();
+	    for (int i = offset; i < offset + length; ++i) {
+	        builder.append(String.format("%02x", bytes[i]));
+	    }
+	    return builder.toString();
+	}
 
 	private static boolean[] bytes_to_bits(byte[] bytesBuffer) {
 		boolean[] bitsBuffer = new boolean[bytesBuffer.length * 8];
@@ -268,6 +277,11 @@ public class Node {
 		InetAddress ip = InetAddress.getByName(addr);
 		byte[] baddr = ip.getAddress();
 		System.arraycopy(baddr, 0, bytes, offset, 4);
+	}
+
+	private static String bytes_to_addr(byte[] bytes, int offset) throws UnknownHostException {
+		byte[] baddr = Arrays.copyOfRange(bytes, offset, offset + 4);
+		return InetAddress.getByAddress(baddr).getHostAddress();
 	}
 
 	private static int bytes_to_int32(byte[] bytes, int offset) {
@@ -479,7 +493,9 @@ public class Node {
 			ByteArrayOutputStream bos = new ByteArrayOutputStream();
 			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_ICMP_REQ, i));
 			System.arraycopy(BADDR, 0, macPayload, 0, 4);
-			Arrays.fill(macPayload, 4, 60, (byte) 48);
+			macPayload[4] = 0;
+			macPayload[5] = (byte) i;
+			Arrays.fill(macPayload, 6, 62, (byte) 48);
 			phyPayloadStream.write(macPayload);
 			byte[] phyPayload = phyPayloadStream.toByteArray();
 			bos.write(header);
@@ -559,7 +575,7 @@ public class Node {
 			File file_req_notify = new File("icmp_req.bin.notify");
 			File file_rep_notify = new File("icmp_rep.bin.notify");
 			FileOutputStream fos = new FileOutputStream(file_req);
-			fos.write(recv_req, 4, 60);
+			fos.write(recv_req, 4, 62);
 			fos.close();
 			file_req_notify.createNewFile();
 			while (!file_rep_notify.exists()) {
@@ -569,6 +585,8 @@ public class Node {
 			FileInputStream fis = new FileInputStream(file_rep);
 			byte[] recv_rep = fis.readAllBytes();
 			fis.close();
+			if (recv_rep.length == 0)
+				continue;
 			ByteArrayOutputStream phyPayloadStream = new ByteArrayOutputStream();
 			ByteArrayOutputStream bos = new ByteArrayOutputStream();
 			phyPayloadStream.write(get_mac_header(NODE_TX, NODE_ID, TYPE_ICMP_REP, cnt));
@@ -848,6 +866,12 @@ public class Node {
 				boolean replied = icmp_reply[frame_no];
 				if (!replied) {
 					icmp_reply[frame_no] = true;
+					synchronized (icmp_rep_received) {
+						if (icmp_rep_received[frame_no] != null)
+							return;
+						icmp_rep_received[frame_no] = decoded_bytes;
+//						System.out.println(decoded_bytes[17]);
+					}
 					synchronized (sync_icmp) {
 						sync_icmp.notify();
 					}
@@ -890,7 +914,7 @@ public class Node {
 		speak.write(to_send, 0, to_send.length);
 	}
 
-	private void send_icmp_req() throws InterruptedException {
+	private void send_icmp_req() throws InterruptedException, UnknownHostException {
 		while (!stopped) {
 			int i = icmp_req_to_send.take();
 			boolean replied;
@@ -903,8 +927,15 @@ public class Node {
 			}
 			if (!replied)
 				System.out.println("Time out!");
-			else
-				System.out.println("Ping success!");
+			else {
+				byte[] received;
+				synchronized (icmp_rep_received) {
+					received = icmp_rep_received[i];
+				}
+				String ip_addr = bytes_to_addr(received, 4);
+				System.out.println("Ping success! IP: " + ip_addr);
+				System.out.println("Payload: " + bytes_to_hex(received, 10, 56));
+			}
 		}
 	}
 

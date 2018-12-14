@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 
-import time, socket, struct, select, random
+import time, socket, struct, select, random, os
+
+FILE_REQ = 'icmp_req.bin'
+FILE_REP = 'icmp_rep.bin'
+FILE_REQ_NOTIFY = 'icmp_req.bin.notify'
+FILE_REP_NOTIFY = 'icmp_rep.bin.notify'
 
 # From /usr/include/linux/icmp.h; your milage may vary.
 ICMP_ECHO_REQUEST = 8 # Seems to be the same on Solaris.
@@ -68,9 +73,9 @@ def do_one(dest_addr, packet_id, seq, data, timeout=1):
         return
     packet = create_packet(packet_id, seq, data)
     my_socket.sendto(packet, (dest_addr, 0))
-    delay = receive_ping(my_socket, packet_id, time.time(), timeout)
+    result = receive_ping(my_socket, packet_id, time.time(), timeout)
     my_socket.close()
-    return delay
+    return result
 
 def receive_ping(my_socket, packet_id, time_sent, timeout):
     # Receive the ping from the socket.
@@ -89,33 +94,44 @@ def receive_ping(my_socket, packet_id, time_sent, timeout):
             '!bbHHh', icmp_header)
         repack_header = struct.pack('!bbHHh', type_, code, 0, p_id, seq)
         new_chksum = checksum(repack_header + data)
+        delay = time_received - time_sent
         if new_chksum == chksum:
-            return time_received - time_sent
-        time_left -= time_received - time_sent
+            return data, delay
+        time_left -= delay
         if time_left <= 0:
             return
 
-def verbose_ping(dest_addr, timeout=1, count=4):
-    """
-    Sends one ping to the given "dest_addr" which can be an ip or hostname.
-
-    "timeout" can be any integer or float except negatives and zero.
-    "count" specifies how many pings will be sent.
-
-    Displays the result on the screen.
-
-    """
+def main():
     packet_id = random.randrange(0x10000)
-    data = PAYLOAD
-    for seq in range(count):
-        print('ping {}...'.format(dest_addr))
-        delay = do_one(dest_addr, packet_id, seq, data, timeout)
-        if delay == None:
-            print('failed. (Timeout within {} seconds.)'.format(timeout))
-        else:
-            delay = round(delay * 1000.0, 4)
-            print('get ping in {} milliseconds.'.format(delay))
-    print()
+    timeout = 1
+
+    while True:
+        while not os.path.exists(FILE_REQ_NOTIFY):
+            time.sleep(0.05)
+
+        os.remove(FILE_REQ_NOTIFY)
+        print("Packet")
+        # shutil.copyfile(FILE_REQ, FILE_REP)
+
+        with open(FILE_REQ, 'rb') as file_req, open(FILE_REP, 'wb') as file_rep:
+            dest_addr = file_req.read(4)
+            seq = file_req.read(2)
+            data = file_req.read(56)
+            seq_int = int.from_bytes(seq, 'big')
+            ip_str = socket.inet_ntoa(dest_addr)
+            print('ping {}...'.format(ip_str))
+            result = do_one(ip_str, packet_id, seq_int, data, timeout)
+            if result is None:
+                print('failed. (Timeout within {} seconds.)'.format(timeout))
+            else:
+                data, delay = result
+                delay = round(delay * 1000.0, 4)
+                print('get ping in {} milliseconds.'.format(delay))
+                file_rep.write(dest_addr)
+                file_rep.write(seq)
+                file_rep.write(data)
+
+        open(FILE_REP_NOTIFY, 'wb').close()
 
 if __name__ == '__main__':
-    verbose_ping('119.75.217.26')
+    main()

@@ -10,6 +10,6 @@ while True:
         time.sleep(0.1)
 
     os.remove(FILE_REQ_NOTIFY)
-    print("SSS")
+    print("Packet")
     shutil.copyfile(FILE_REQ, FILE_REP)
     open(FILE_REP_NOTIFY, 'w').close()
