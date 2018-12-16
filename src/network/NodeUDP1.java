@@ -396,7 +396,7 @@ public class NodeUDP1 {
 	}
 
 	public void packet_detect() throws IOException, InterruptedException {
-		int buffer_len = 1000;
+		int buffer_len = 1024;
 		byte buffer[] = new byte[buffer_len * 2];
 
 		boolean syncState = true;

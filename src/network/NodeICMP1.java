@@ -16,6 +16,8 @@ import javax.sound.sampled.TargetDataLine;
 
 public class NodeICMP1 {
 
+	final static boolean RUN_MAC = true;
+
 	final static byte[] BADDR = {119, 75, (byte) 217, 26};
 
 	final static byte TYPE_ICMP_REQ = (byte) 0x00;
@@ -100,7 +102,8 @@ public class NodeICMP1 {
 			});
 			Thread mc = new Thread(()->{
 				try {
-					mac_icmp();
+					if (RUN_MAC)
+						mac_icmp();
 				} catch (InterruptedException | IOException e) {
 					e.printStackTrace();
 				}
@@ -427,6 +430,10 @@ public class NodeICMP1 {
 			byte[] recv_req;
 			synchronized (icmp_req_received) {
 				recv_req = icmp_req_received[seq];
+			}
+			// flip payload
+			for (int i = 10; i < 66; ++i) {
+				recv_req[i] = (byte) ~recv_req[i];
 			}
 			ByteArrayOutputStream phyPayloadStream = new ByteArrayOutputStream();
 			ByteArrayOutputStream bos = new ByteArrayOutputStream();
