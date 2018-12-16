@@ -50,8 +50,8 @@ public class NodeICMP2 {
 	final static int spb = 3;            // samples per bit
 	final static int header_size = 200;
 	final static int max_retry = 10;
-	final static float thresPower = 36;
-	final static float thresPowerCoeff = 33;
+	final static float thresPower = 80;
+	final static float thresPowerCoeff = 100;
 	final static int thresBack = 1200;
 	final static long ack_timeout = 1000;
 	int retry = 0;
@@ -64,9 +64,9 @@ public class NodeICMP2 {
 	byte[][] icmp_req_received = new byte[65536][];
 	byte[][] icmp_rep_received = new byte[65536][];
 	ArrayBlockingQueue<Integer> icmp_rep_to_int =
-			new ArrayBlockingQueue<Integer>(16);
+			new ArrayBlockingQueue<Integer>(1024);
 	ArrayBlockingQueue<Integer> icmp_rep_to_send =
-			new ArrayBlockingQueue<Integer>(16);
+			new ArrayBlockingQueue<Integer>(1024);
 	boolean[] icmp_reply = new boolean[100];
 	byte[][] icmp_payload = new byte[100][];
 	boolean stopped = false;
@@ -393,7 +393,8 @@ public class NodeICMP2 {
 			write_bytes_analog(bos, phyPayload);
 			write_byte_analog(bos, get_crc(phyPayload));
 			byte[] to_send = bos.toByteArray();
-			speak.write(to_send, 0, to_send.length);
+			for (int i = 0; i < 20; ++i)
+				speak.write(to_send, 0, to_send.length);
 		}
 	}
 
@@ -418,7 +419,8 @@ public class NodeICMP2 {
 			write_bytes_analog(bos, phyPayload);
 			write_byte_analog(bos, get_crc(phyPayload));
 			byte[] to_send = bos.toByteArray();
-			speak.write(to_send, 0, to_send.length);
+			for (int i = 0; i < 20; ++i)
+				speak.write(to_send, 0, to_send.length);
 		}
 	}
 

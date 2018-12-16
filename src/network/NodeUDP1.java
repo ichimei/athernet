@@ -43,8 +43,8 @@ public class NodeUDP1 {
 	final static int spb = 3;            // samples per bit
 	final static int header_size = 200;
 	final static int max_retry = 10;
-	final static float thresPower = 36;
-	final static float thresPowerCoeff = 33;
+	final static float thresPower = 80;
+	final static float thresPowerCoeff = 100;
 	final static int thresBack = 1200;
 	final static long ack_timeout = 1000;
 	int retry = 0;
@@ -331,7 +331,8 @@ public class NodeUDP1 {
 		boolean ack_got = false;
 		while (!ack_got) {
 			System.out.println("Sending...");
-			send_frame(0);
+			for (int i = 0; i <= 20; ++i)
+				send_frame(0);
 			synchronized (syncHi) {
 				syncHi.wait(2000);
 			}
@@ -345,7 +346,8 @@ public class NodeUDP1 {
 		boolean ack_got = false;
 		while (!ack_got) {
 			System.out.println("Sending...");
-			send_frame(send_num_frames + 1);
+			for (int i = 0; i <= 20; ++i)
+				send_frame(send_num_frames + 1);
 			synchronized (syncBye) {
 				syncBye.wait(2000);
 			}
