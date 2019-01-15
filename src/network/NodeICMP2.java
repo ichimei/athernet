@@ -393,7 +393,7 @@ public class NodeICMP2 {
 			write_bytes_analog(bos, phyPayload);
 			write_byte_analog(bos, get_crc(phyPayload));
 			byte[] to_send = bos.toByteArray();
-			for (int i = 0; i < 20; ++i)
+			for (int i = 0; i < 1; ++i)
 				speak.write(to_send, 0, to_send.length);
 		}
 	}
@@ -419,7 +419,7 @@ public class NodeICMP2 {
 			write_bytes_analog(bos, phyPayload);
 			write_byte_analog(bos, get_crc(phyPayload));
 			byte[] to_send = bos.toByteArray();
-			for (int i = 0; i < 20; ++i)
+			for (int i = 0; i < 1; ++i)
 				speak.write(to_send, 0, to_send.length);
 		}
 	}
@@ -499,16 +499,16 @@ public class NodeICMP2 {
 		if (type == TYPE_ICMP_REP) {
 			int seq = bytes_to_int16_be(decoded_bytes, 8);
 			synchronized (icmp_rep_received) {
-				if (icmp_rep_received[seq] != null)
-					return;
+//				if (icmp_rep_received[seq] != null)
+//					return;
 				icmp_rep_received[seq] = decoded_bytes;
 			}
 			icmp_rep_to_int.put(seq);
 		} else if (type == TYPE_ICMP_REQ) {
 			int seq = bytes_to_int16_be(decoded_bytes, 8);
 			synchronized (icmp_req_received) {
-				if (icmp_req_received[seq] != null)
-					return;
+//				if (icmp_req_received[seq] != null)
+//					return;
 				icmp_req_received[seq] = decoded_bytes;
 			}
 			icmp_rep_to_send.put(seq);
