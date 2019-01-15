@@ -6,11 +6,19 @@ import time, socket, struct, select, random, os
 # From /usr/include/linux/icmp.h; your milage may vary.
 ICMP_ECHO_REQUEST = 8 # Seems to be the same on Solaris.
 ICMP_ECHO_REPLY = 0
+PATTERN = b'\xfa\xce'
 
 FILE_REQ = 'icmp_req2.bin'
 FILE_REP = 'icmp_rep2.bin'
 FILE_REQ_NOTIFY = 'icmp_req2.bin.notify'
 FILE_REP_NOTIFY = 'icmp_rep2.bin.notify'
+
+def pattern_match(data, pattern=PATTERN):
+    len_pat = len(pattern)
+    for i in range(len_pat):
+        if pattern[i] != data[i + 16]:
+            return False
+    return True
 
 def checksum(source_string):
     # I'm not too confident that this is right but testing seems to
@@ -60,6 +68,9 @@ def main():
             continue
         print('Notice:', addr)
         data = rec_packet[28:]
+        if not pattern_match(data):
+            print('who?')
+            continue
         repack_header = struct.pack('!bbHHh', type_, code, 0, p_id, seq)
         corr_chksum = checksum(repack_header + data)
         if corr_chksum != chksum:
@@ -81,6 +92,8 @@ def main():
         else:
             print('timeout!')
             continue
+
+        print('success!')
 
         os.remove(FILE_REP_NOTIFY)
 
