@@ -35,7 +35,7 @@ In Project 1 (acoustic connection), we encode the bits into samples, which are t
 
 In Project 2 (multiple access), we make the transmission more reliable by implementing \emph{carrier-sense multiple access} (CSMA) with \emph{acknowledgment} (ACK). The sender ensures that a packet arrives at the receiver when it acquires an ACK packet. If it doesn't, it retransmits the packet. In addition, the \emph{backoff} algorithm is implemented. The sender listens to the channel to determine if someone else is transmitting. If so, the transmission won't succeed, so it waits for a period of time and listens to the channel again, until it finds that the nobody is transmitting.
 
-In Project 3 (NAT / routing), we implement the \emph{network address translation} (NAT) method. A gateway is built to forward packets between the Athernet and Internet, which translates Athernet traffic to run on existing Internet infrastructure, and vice versa. For example, if an Athernet packet arrives at the gateway, it translates and forwards the packet to the Internet. The connection to the Internet depends on the socket library.
+In Project 3 (NAT / routing), we implement the \emph{network address translation} (NAT) method. A \emph{gateway} is built to forward packets between the Athernet and Internet, which translates Athernet traffic to run on existing Internet infrastructure, and vice versa. For example, if an Athernet packet arrives at the gateway, it translates and forwards the packet to the Internet. The connection to the Internet depends on the GNU socket library. In addition, we implement a subset of the \emph{Internet control message protocol} (ICMP), so that Athernet nodes can send and reply ICMP echo requests, and receive ICMP echo replies.
 
 In Project 4 (FTP), we implement an Athernet client of the \emph{file transfer protocol} (FTP), so that the user may retrieve files from the Internet. This depends on the gateway implemented in the last project, which is able to access both the Internet and Athernet.
 
@@ -159,6 +159,52 @@ The \textsf{macping} is a utility used to measure the round trip delay between t
 \item The \textsf{macping} frame is generated with zero MAC payload, and the type field of the MAC frame is set to \textsf{MACPING\_REQ}. This frame is timestamped when sending into the physical layer.
 \item The receiver is responsible for automatically replying the frame from the sender with a frame with type \textsf{MACPING\_REPLY}.
 \item If the sender receives \textsf{MACPING\_REPLY}, it calculates and prints the round trip delay on the screen. If it does not receive for a period of time, it prints \textsf{TIMEOUT}.
+\end{itemize}
+
+\section{Project 3: NAT / Routing}
+
+In this project, we implement the \emph{network address translation} (NAT) method. A \emph{gateway} is built to forward packets between the Athernet and Internet, which translates Athernet traffic to run on existing Internet infrastructure, and vice versa.
+
+To connect to an Athernet node, protocols built in previous projects are used. To connect to the Internet, the GNU socket library is used. A gateway establishes at least two connections, i.e. to the Athernet and Internet, and translates and forwards packets between them.
+
+Assume that there are three nodes: $A$ (Athernet), $B$ (gateway), and $C$ (Internet).
+
+\subsection{Forwarding packets between Athernet and Internet}
+
+We use different languages to establish connections in the Athernet and Internet. For the gateway, we need to share data between the two connections, so we use temporary files on the disk. To send a packet from Athernet to Internet, the working flow is as follows.
+\begin{itemize}
+\item $A$ sends a packet to $B$ via the Athernet.
+\item The Athernet connection of $B$ stores the packet to a file $F$, and creates a notification file \textsf{ATH\_NOTIFY} in the current directory.
+\item The Internet connection of $B$ has a thread waiting for the notification file from the Athernet, \textsf{ATH\_NOTIFY}. As soon as it finds this file in the current directory, it deletes it, changes the source of this packet to $B$, and sends the packet in $F$ to the destination (i.e. $C$), which is also specified in the packet.
+\end{itemize}
+
+To send a packet from Internet to Athernet, the working flow is as follows.
+\begin{itemize}
+\item $C$ sends a packet to $B$ via the Internet.
+\item The Athernet connection of $B$ stores the packet to a file $F'$, and creates a notification file \textsf{INT\_NOTIFY} in the current directory.
+\item The Athernet connection of $B$ has a thread waiting for the notification file from the Internet, \textsf{INT\_NOTIFY}. As soon as it finds this file in the current directory, it deletes it and sends the packet in $F'$ to the destination (i.e. $A$), which is also specified in the packet.
+\end{itemize}
+
+\subsection{ICMP echo}
+
+We implement a subset of the \emph{Internet control message protocol} (ICMP), so that Athernet nodes can send and reply \emph{ICMP echo requests}, and receive \emph{ICMP echo replies}.
+
+To send an ICMP echo request from $A$ to $C$ and receive ICMP echo reply, the working flow is as follows.
+\begin{itemize}
+\item $A$ sends an ICMP echo request, with IP address of $C$, payload and sequence number specified.
+\item $B$ receives the request and forwards it to $C$, and then listens to the channel for an ICMP echo reply.
+\item If $B$ receives the ICMP echo reply from $C$, it forwards it to $A$. Otherwise, timeout.
+\item $A$ receives the ICMP echo reply forwarded by $B$. If it doesn't, timeout.
+\end{itemize}
+
+To send an ICMP echo request from $C$ to $A$, since $A$ is behind the NAT, $C$ should send the request to $B$, with payload that indicates the address of $A$. The working flow is as follows.
+\begin{itemize}
+\item $C$ sends an ICMP echo request, with IP address of $B$, payload that indicates the address of $A$, and sequence number specified.
+\item $B$ receives the request. It reads the payload and its NAT table, and finds that it is sent to $A$. If the payload doesn't indicate a valid address, simply ignore the packet.
+\item $B$ forwards the packet to $A$, and then listens to the channel for an ICMP echo reply.
+\item If $A$ receives the request, it sends an ICMP echo reply.
+\item If $B$ receives the ICMP echo reply from $A$, it forwards it to $C$. Otherwise, timeout.
+\item $C$ receives the ICMP echo reply forwarded by $B$. If it doesn't, timeout.
 \end{itemize}
 
 \end{document}
