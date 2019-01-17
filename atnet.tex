@@ -1,0 +1,164 @@
+% !TeX program = pdflatex
+
+\documentclass[11pt, conference]{IEEEtran}
+\usepackage{hyperref}
+\hypersetup{unicode, bookmarksnumbered, bookmarksopen, breaklinks, hidelinks, pdfstartview=FitH}
+\AtBeginDocument{\urlstyle{tt}}
+\usepackage{amsmath, amsfonts, amssymb}
+\usepackage{txfonts}
+\usepackage{graphicx, xcolor}
+\graphicspath{{figures/}}
+\usepackage{cite}
+\usepackage{booktabs}
+%\usepackage{subcaption}
+\usepackage{float}
+
+\let\Mean\overline
+\def\D{\mathrm{d}}
+\def\Email#1{\href{mailto:#1@shanghaitech.edu.cn}{#1}}
+
+\begin{document}
+
+\title{Athernet: A Toy Network}
+\author{%
+\IEEEauthorblockN{Yifan Cao \qquad Weitian Wang}
+\IEEEauthorblockA{ShanghaiTech University \\
+\texttt{\char`\{\Email{caoyf}, \Email{wangwt}\char`\}@shanghaitech.edu.cn}}
+}
+\maketitle
+
+\section{Introduction}
+
+We implement a toy network called \emph{Athernet}, which is a network that uses audio signals to send and receive information.
+
+In Project 1 (acoustic connection), we encode the bits into samples, which are the amplitudes according to the time, by using \emph{phase-shift keying} (PSK). For a few number of samples, we pack them into a frame and added a header, which is predefined, unique and long, so that the receiver may find out the accurate start of this frame. A frame is also called a packet.
+
+In Project 2 (multiple access), we make the transmission more reliable by implementing \emph{carrier-sense multiple access} (CSMA) with \emph{acknowledgment} (ACK). The sender ensures that a packet arrives at the receiver when it acquires an ACK packet. If it doesn't, it retransmits the packet. In addition, the \emph{backoff} algorithm is implemented. The sender listens to the channel to determine if someone else is transmitting. If so, the transmission won't succeed, so it waits for a period of time and listens to the channel again, until it finds that the nobody is transmitting.
+
+In Project 3 (NAT / routing), we implement the \emph{network address translation} (NAT) method. A gateway is built to forward packets between the Athernet and Internet, which translates Athernet traffic to run on existing Internet infrastructure, and vice versa. For example, if an Athernet packet arrives at the gateway, it translates and forwards the packet to the Internet. The connection to the Internet depends on the socket library.
+
+In Project 4 (FTP), we implement an Athernet client of the \emph{file transfer protocol} (FTP), so that the user may retrieve files from the Internet. This depends on the gateway implemented in the last project, which is able to access both the Internet and Athernet.
+
+\section{Project 1: Acoustic Connection}
+
+In this project, we establish a connection between two nodes with audio signals, so that they could send information to each other. We modulate the bits into audio samples at the sender side, and demodulate the audio samples into bits at the receiver side.
+
+\subsection{Modulation}
+
+To modulate the information, we use the \emph{phase-shift keying} (PSK) method. To represent 1, the $0^\circ$ phase is used. To represent 0, the $180^\circ$ phase is used. To be particular, a wave $s(t)$ that represents a bit has the form
+\[
+s(t) =
+\begin{cases}
+A\sin(2\pi f_ct), & \text{binary 1}, \\
+A\sin(2\pi f_ct + \pi), & \text{binary 0},
+\end{cases}
+\]
+where $A$ is the amplitude and $f_c$ is the frequency of the carrier wave.
+
+To represent a bit, we use multiple samples to form a wave which is at least as long as half of the period of the carrier wave, so that it is enough to distinguish this bit from another one, and easy to demodulate. To transfer multiple bits at a time, we simply manipulate these samples together so as to send them at a time later.
+
+In order to eliminate errors and improve the efficiency, we pack a number of bits into a frame (aka. a packet). We add a header before the samples of bits, which is used to find the accurate start of this frame. The header is a predefined special wave pattern and can help with synchronization. The wave we use could be roughly described as follows. It is a ``sine'' wave starting at some frequency, but the frequency is also increasing at some speed until the midpoint. After that, it decreases at the same speed and ends at the same frequency that this wave starts with.
+
+\subsection{Demodulation}
+
+We use an algorithm to demodulate the audio samples to bits. There are two states: synchronizing and decoding.
+
+\subsubsection{Synchronization}
+
+In the synchronizing state, the program is reading the samples and finds if a header arrives. If it ensures that it hears a header, it switches to the decoding state with the accurate start of this frame recorded.
+
+When synchronizing, we are looking at a number of samples, which is as many as that of a header. We expect to decide how much could these samples fit the header. A variable \textsf{syncPower} is used to estimate the goodness of fit. Given header $H$ and samples $S$ with length $N$, this value is defined as
+\[
+\textsf{syncPower} = \sum_{i=1}^N H_i \cdot S_i.
+\]
+The larger \textsf{syncPower} is, the better the samples fit the header. We set a threshold value that \textsf{syncPower} must exceed if the samples are considered as a header. We use a variable called \textsf{maxSyncPower} which records the maximum \textsf{syncPower} value that exceeds the threshold in the near past. If \textsf{maxSyncPower} has not been changed for a period of time, and the current value of it does exceed the threshold, we conclude that the time \textsf{maxSyncPower} appears is exactly the accurate start of the packet. Here we need to wait for a period of time, in case the best fit is used.
+
+To be stricter, we apply an additional strategy to the synchronization algorithm. When we arrive at the header at some time, the \textsf{syncPower} should be obviously large than that of even 1 sample deviation. Taking advantage of this feature, we allow the update of \textsf{maxSyncPower} only if the \textsf{syncPower} exceeds a fixed multiple of \textsf{power}, which roughly estimates the power of the recent samples. Initially it is $0$, and it is updated according to the equation
+\[
+\textsf{power}_i = \frac{63}{64} \cdot \textsf{power}_{i-1} + \frac{S_i^2}{64},
+\]
+where $i$ is the sample number and $S_i$ is the sample value. In this equation, the most recent sample $S_i$ is merged into \textsf{power} with ratio $1/64$, while the previous \textsf{power} is reduced to $63/64$ of the original, since it represents some older values.
+
+\subsubsection{Decoding}
+
+In the decoding state, the program has already found the start of this frame. If a bit is represented by $s$ samples, and this frame includes $n$ bits, the number of samples we should receive after the header is $n \cdot s$. We split the samples into groups of length $s$, where each group contains samples that represent a common bit. These samples should roughly have the form
+\[
+s(t) =
+\begin{cases}
+A\sin(2\pi f_ct), & \text{binary 1}, \\
+A\sin(2\pi f_ct + \pi), & \text{binary 0},
+\end{cases}
+\]
+which is similar to those the sender generates. To decode the samples, multiply their values with $A\sin(2\pi f_ct)$. The form then becomes
+\[
+s(t) =
+\begin{cases}
+A\sin^2(2\pi f_ct), & \text{binary 1}, \\
+-A\sin^2(2\pi f_ct), & \text{binary 0}.
+\end{cases}
+\]
+In other words, if the bit is $1$, the values should chiefly be positive, otherwise negative. We sum these values up, and conclude the bit is $1$ if the sum is positive, and $0$ otherwise.
+
+\subsection{Cyclic Redundancy Check (CRC)}
+
+To ensure that the decoded bits are correct, we use the \emph{cyclic redundancy check} (CRC) code. A check value (or \emph{checksum}) of 8 bits (CRC-8) is used, which is a function of the actual bits in a packet. If two inputs of this function are the same, the outputs are also the same. Otherwise, the outputs can hardly be the same if the deviation in the inputs is caused by noises.
+
+At the sender side, we append the checksum after the actual bits. At the receiver side, we check if the checksum matches the actual bits and conclude if the transmission has an error or not.
+
+\section{Project 2: Multiple Access}
+
+Each device is called a \emph{node} and has a unique node ID called \emph{address}. In this project, we augment the physical data communication link from the last project, so that it can support mutual communication among multiple nodes, while the transmission is more reliable by implementing \emph{carrier-sense multiple access} (CSMA) with \emph{acknowledgment} (ACK). The protocol is called the \emph{medium access control} (MAC).
+
+\subsection{The Packet Structure}
+
+In the packet, we reserve some bits to store necessary fields.
+\begin{itemize}
+\item The first 8 bits are for the destination address, i.e. where this packet goes to.
+\item The next 8 bits are for the source address, i.e. where this packet comes from.
+\item The next 8 bits are for the type of this packet. The two important types are \textsf{NORMAL} and \textsf{ACK}, which represent a normal and an acknowledgment packet respectively.
+\item The next 8 bits are for the sequence number. This is useful if a large file is sent and fragmentation is required.
+\end{itemize}
+
+\subsection{Acknowledgment (ACK)}
+
+In order to eliminate errors due to hardware reasons, the \emph{acknowledgment} (ACK) protocol is used. A simple protocol is as follows.
+\begin{itemize}
+\item The sender sends a packet.
+\item If the receiver receives the packet, check its checksum. If correct, send an ACK packet. Otherwise, ignore it.
+\item If the sender receives the ACK packet, check its checksum. If correct, say it successfully sends the packet. If it cannot receive the ACK packet from the receiver with the correct checksum, the packet is lost, and the sender resends the packet.
+\end{itemize}
+If there are multiple packets to send, there are two strategies.
+\begin{itemize}
+\item \emph{Stop-and-wait}. The sender does not send the next packet, until it receives the ACK of this packet.
+\item \emph{Sliding window}. The sender does not send the $k$-th packet, until it at least receives the $(k-n)$-th packet and all the previous packets. In this case, the window of the sender represents $n$ packets from $k-n$ to $k-1$. At a given time, the sender sends at most all of these $n$ packets at a time.
+\end{itemize}
+We use a simplified version of the sliding window, which is easy to implement and fast. We make the window as large as the number of all packets, i.e. we send all packets at a time and receive the ACKs. If we find that the ACKs of some packets are missing, resend these packets in the next round. In the end, the ACKs of all the packets should be received. The packet detection runs in another thread, so sending and receiving can be done at parallel.
+
+\subsection{Carrier-Sense Multiple Access (CSMA)}
+
+Since it is possible that the channel (i.e. audio cable) is used by someone else, sending a packet may fail. To avoid this, we listen to the channel before we send a packet. The protocol is as follows.
+\begin{itemize}
+\item Initialize the safe bit to false.
+\item At a given time, the packet detection thread reads the \textsf{power} value. If it exceeds a threshold value, someone else is using this channel, and set the safe bit to false. Otherwise, set it to true.
+\item When a thread wants to send a packet (a normal one or an ACK), it checks the safe bit. If it is false, wait (\emph{back off}) for a few milliseconds and check the safe bit again, until this bit is true and then it may send a packet since the channel is considered free.
+\end{itemize}
+
+\subsection{The \textsf{macperf} Utility}
+
+The \textsf{macperf} is a utility used to measure the throughput between two nodes in Athernet. To run it on one node, the address of another node is required. The working flow is as follows.
+\begin{itemize}
+\item The \textsf{macperf} frame is generated with random MAC payload, and the type field of the MAC frame is set to \textsf{DATA}.
+\item The sender tries its best to send out \textsf{macperf} packets.
+\item The sender counts and prints the throughput on the screen every one second.
+\end{itemize}
+
+\subsection{The \textsf{macping} Utility}
+
+The \textsf{macping} is a utility used to measure the round trip delay between two nodes in Athernet. To run it on one node, the address of another node is required. The working flow is as follows.
+\begin{itemize}
+\item The \textsf{macping} frame is generated with zero MAC payload, and the type field of the MAC frame is set to \textsf{MACPING\_REQ}. This frame is timestamped when sending into the physical layer.
+\item The receiver is responsible for automatically replying the frame from the sender with a frame with type \textsf{MACPING\_REPLY}.
+\item If the sender receives \textsf{MACPING\_REPLY}, it calculates and prints the round trip delay on the screen. If it does not receive for a period of time, it prints \textsf{TIMEOUT}.
+\end{itemize}
+
+\end{document}
