@@ -197,7 +197,7 @@ To send an ICMP echo request from $A$ to $C$ and receive ICMP echo reply, the wo
 \item $A$ receives the ICMP echo reply forwarded by $B$. If it doesn't, timeout.
 \end{itemize}
 
-To send an ICMP echo request from $C$ to $A$, since $A$ is behind the NAT, $C$ should send the request to $B$, with payload that indicates the address of $A$. The working flow is as follows.
+To send an ICMP echo request from $C$ to $A$ and receive ICMP echo reply, since $A$ is behind the NAT, $C$ should send the request to $B$, with payload that indicates the address of $A$. The working flow is as follows.
 \begin{itemize}
 \item $C$ sends an ICMP echo request, with IP address of $B$, payload that indicates the address of $A$, and sequence number specified.
 \item $B$ receives the request. It reads the payload and its NAT table, and finds that it is sent to $A$. If the payload doesn't indicate a valid address, simply ignore the packet.
@@ -206,5 +206,34 @@ To send an ICMP echo request from $C$ to $A$, since $A$ is behind the NAT, $C$ s
 \item If $B$ receives the ICMP echo reply from $A$, it forwards it to $C$. Otherwise, timeout.
 \item $C$ receives the ICMP echo reply forwarded by $B$. If it doesn't, timeout.
 \end{itemize}
+
+\section{Project 4: FTP}
+
+In this project, we implement an Athernet client of the \emph{file transfer protocol} (FTP), so that the user may retrieve files from the Internet. This depends on the gateway implemented in the last project.
+
+The Athernet client node may specify the address of the FTP server, and is able to use FTP control commands. Among these commands, some simply sends short messages and receives short responses, such as \textsf{USER}, \textsf{PASS}, \textsf{PWD}, \textsf{CWD}, \textsf{PASV}. Some can initiate data transmission, such as \textsf{LIST}, \textsf{RETR}. In order to simplify the behavior, at the client side, \textsf{LIST} prints the data to \textsf{stdout}, and \textsf{RETR} saves the data as a file in the current directory.
+
+Assume that there are three nodes: $A$ (Athernet), $B$ (gateway), and $C$ (Internet). The working flow is as follows.
+\begin{itemize}
+\item $A$ specifies the address of the FTP server and tells $B$.
+\item $B$ establishes an Internet connection with $C$. If success, there may be a response from $C$.
+\item $B$ tells $A$ the connection result and optionally with the responses from $C$.
+\item $A$ prints a message saying if the connection is established or not, optionally with the response.
+\item $A$ sends the FTP control command to $B$.
+\item $B$ forwards the command to $C$.
+\item $C$ sends the response to $B$, optionally with data if the command is \textsf{LIST} or \textsf{RETR}.
+\item $B$ forwards the response to $A$, optionally with data.
+\item $A$ receives the response, optionally with data. If the command sent is \textsf{LIST}, print it out; if it is \textsf{RETR}, save to a file. Then it prints the response.
+\end{itemize}
+Note: All the packets in Athernet are sent under a stop-and-wait protocol. The next packet may be sent only if the ACK of the current packet is received.
+
+\clearpage
+
+\begin{thebibliography}{1}
+\bibitem{stan} Stanford University EE102B. \emph{Analog Transmission of Digital Data: ASK, FSK, PSK, QAM}. \url{https://web.stanford.edu/class/ee102b/contents/DigitalModulation.pdf}.
+\bibitem{stack} Stack Overflow. \emph{Translate CRC8 from C to Java}. \url{https://stackoverflow.com/questions/25284556/translate-crc8-from-c-to-java}.
+\bibitem{pysoc} Python 3.7.2 Documentation. \emph{\textsf{socket} --- Low-level networking interface}. \url{https://docs.python.org/3/library/socket.html}.
+\bibitem{ping} GitHub Gist. \emph{A pure python ping implementation using raw socket}. \url{https://gist.github.com/pklaus/856268}.
+\end{thebibliography}
 
 \end{document}
